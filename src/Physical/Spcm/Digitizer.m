@@ -95,6 +95,19 @@ classdef Digitizer < EventSender
 %             end
             obj.checkError(ret);
         end
+
+        % temerary code, yona 03/06/26
+        % function checkError(obj, ret)
+        % 
+        %     fprintf('Digitizer return code = %d\n', ret);
+        % 
+        %     errorTxt = CsMl_ErrorHandler(ret, 0, obj.handle);
+        % 
+        %     if ~isempty(errorTxt)
+        %         fprintf('Digitizer error: %s\n', errorTxt);
+        %     end
+        % 
+        % end
         
         function checkError(obj, ret)
             errorTxt = CsMl_ErrorHandler(ret, 0, obj.handle);
@@ -209,6 +222,13 @@ classdef Digitizer < EventSender
             obj.acqInfo.TriggerDelay = 0;
             obj.acqInfo.TimeStampConfig = 0;
             
+            % Start the channel list empty (keeping its fields). Before, entries
+            % from an earlier call with more channels stayed in the list and
+            % were configured again: e.g. channel 2 left over from [1 2]
+            % (experiments, 'both inputs') in a 'Single'-mode [1] acquisition,
+            % where only channel 1 exists -> GaGe error -23 "Invalid channel
+            % index". (2026-11-23)
+            obj.channelInfo = obj.channelInfo([]);
             for i = 1:length(chan)
                 obj.channelInfo(i).Channel = chan(i);
                 obj.channelInfo(i).Coupling = CsMl_Translate('DC', 'Coupling');
@@ -353,4 +373,4 @@ classdef Digitizer < EventSender
             ret = 1;
         end
     end
-end
+end

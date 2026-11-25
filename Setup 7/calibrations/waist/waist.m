@@ -1,0 +1,1 @@
+f = fitPinholeFocus(myStruct.stageScanner.scan, myStruct.imageScanResult.mFirstAxis,myStruct.imageScanResult.mSecondAxis);

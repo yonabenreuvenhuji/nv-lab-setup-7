@@ -43,7 +43,7 @@ classdef ExpMagneticFieldAlignment < ExpESR
     
     methods
         function obj = ExpMagneticFieldAlignment
-            obj@ExpESR([],ExpMagneticFieldAlignment.MY_NAME);
+            obj@ExpESR([],[],ExpMagneticFieldAlignment.MY_NAME);
             obj.stage = ClassExternalFieldControl.GetInstance();
             obj.axesAvaliable = obj.stage.stage_names_;
             obj.axesTypes = obj.stage.stage_types_;
@@ -131,7 +131,7 @@ classdef ExpMagneticFieldAlignment < ExpESR
                     
                     for m = 1:obj.measurDim
                         if m == 1
-                            f = obj.frequencyInternal;
+                            f = obj.frequency;
                         else
                             f = obj.mirrorFrequency;
                         end
@@ -268,7 +268,7 @@ classdef ExpMagneticFieldAlignment < ExpESR
             else
                 S = obj.stage_ESR(:,:,1);
             end                
-            imagesc(obj.frequencyInternal,obj.scanValues,S)
+            imagesc(obj.frequency,obj.scanValues,S)
             xlabel('frequency')
             ylabel('scan values')
             colorbar            
@@ -281,14 +281,14 @@ classdef ExpMagneticFieldAlignment < ExpESR
             axis tight
             
             %plot the last ESR and its fit
-            Sfit = zeros(length(obj.frequencyInternal), obj.measurDim);
+            Sfit = zeros(length(obj.frequency), obj.measurDim);
             for k = 1:obj.measurDim %first point - MW on, second point MW off                
                 a = obj.fit_params.A(index,k);
                 c = obj.fit_params.C(index,k);
                 x0 = squeeze(obj.stage_ESR_centers(index,1,k));
                 if ~isnan(a) && ~isnan(c) && ~isnan(x0)
                     if k ==1
-                        Sfit(:,k) = Sfit(:,k) + a*c./((obj.frequencyInternal'-x0).^2+c);
+                        Sfit(:,k) = Sfit(:,k) + a*c./((obj.frequency'-x0).^2+c);
                     else
                         Sfit(:,k) = Sfit(:,k) + a*c./((obj.freqMirrored'-x0).^2+c);
                     end
@@ -296,7 +296,7 @@ classdef ExpMagneticFieldAlignment < ExpESR
             end
             Sfit = 1 - Sfit;
             set(gcf,'CurrentAxes',obj.figHandle.sp4)
-            plot(obj.frequencyInternal,squeeze(obj.stage_ESR(index,:,:)),obj.frequencyInternal,Sfit,'--')
+            plot(obj.frequency,squeeze(obj.stage_ESR(index,:,:)),obj.frequency,Sfit,'--')
             xlabel('Frequency (MHz)')
             ylabel('FL (norm)')
             axis tight

@@ -1,0 +1,6 @@
+methods (Access = protected)
+function [value, sterr] = getRatioDistributionValues(obj, S1, S2, S1sterr, S2sterr)
+            [value, sterr] = ratioAcrossAverages(S1, S2, S1sterr, S2sterr, ...
+                                                obj.getTotalNumberOfParams());
+        end
+end

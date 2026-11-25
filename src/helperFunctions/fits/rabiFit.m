@@ -32,9 +32,9 @@ end
 
 % Extract data:
 if size(Exp.signal, 1) == 2
-    [t, signal, sterr, ~] = extract1Ddata(Exp);
+    [t, signal, sterr, ~, lastAvg] = extract1Ddata(Exp);
 else
-    [t, signal, ~, ~, sterr, ~] = extract2Ddata(Exp);
+    [t, signal, ~, ~, sterr, ~, ~, ~, lastAvg] = extract2Ddata(Exp);
 end
 signal = reshape(signal,[length(signal) 1]);
 sterr = reshape(sterr,[length(sterr) 1]);
@@ -125,7 +125,7 @@ f = coeff(4);
 halfPiTime = 0.25 * 1/f + x0;
 piTime = 0.5 * 1/f + x0;
 threeHalvesPiTime = 0.75 * 1/f + x0;
-SNR = 2*a / (mean(sterr)*sqrt(Exp.averages*Exp.repeats));
+SNR = 2*a / (mean(sterr)*sqrt(lastAvg*Exp.repeats));
 pulses = [halfPiTime, piTime, threeHalvesPiTime];
 coeffError = fitStd(fitObj, gof);
 

@@ -113,23 +113,24 @@ classdef AWGExpDigitizerDetectionDuration < ExperimentAWG
             end
             
             S = Sequence;
-            S.addEvent(1,                           MW)
             S.addEvent(obj.AWG.TRIG_DURATION,       [triggers(:)', MW(:)']);                        % AWG trigger
             S.addEvent(obj.piTime,                  MW);                                            % MW
-            S.addEvent(1,                           MW)
             S.addEvent(obj.lastDelay,               '');                                            % Last delay
             S.addEvent(obj.detectionDuration,       {'greenLaser', 'detector'});                    % Detection
-            
             S.addEvent(initDuration,                'greenLaser');                                  % Initialization
-            
-%             S.addEvent(1,                           MW)
-%             S.addEvent(obj.AWG.TRIG_DURATION,       MW);                                            % ref
-%             S.addEvent(obj.piTime,                  MW);                                            % ref
-%             S.addEvent(1,                           MW)
-            S.addEvent(obj.lastDelay,                   '');                                        % ref
-            S.addEvent(obj.referenceDetectionDuration, ...
+            if ~obj.balancedSequence
+                S.addEvent(obj.referenceDetectionDuration,...
                                                     {'greenLaser', 'detector'});                    % Reference detection
-            S.addEvent(1,                           'greenLaser');                                  % extra Initialization
+                S.addEvent(1,                           'greenLaser');                              % Initialization
+            else
+                S.addEvent(obj.AWG.TRIG_DURATION,           '');                                    % AWG trigger
+                S.addEvent(obj.tau(end),                    '',                         'MW');               % MW
+                S.addEvent(obj.lastDelay,                   '',                         'lastDelay');       % Last delay
+                S.addEvent(obj.referenceDetectionDuration,...
+                    {'greenLaser', 'detector'});                                                        % Reference detection
+                S.addEvent(initDuration,                'greenLaser');                                  % Initialization
+            end
+
             obj.prepareInternal(S)
             if (obj.changeFlag || obj.restartFlag) && (~obj.dontLoadAWG)
                 obj.LoadAWG;
@@ -295,8 +296,8 @@ classdef AWGExpDigitizerDetectionDuration < ExperimentAWG
             for i = 1:N
                 S1 = mean(S1_full(1:i, :), 1);
                 S2 = mean(S2_full(1:i, :), 1);
-                S1sterr = sqrt(sum(S1sterr_full(1:i, :), 1.^2)) / i;
-                S2sterr = sqrt(sum(S2sterr_full(1:i, :), 1.^2)) / i;
+                S1sterr = sqrt(sum(S1sterr_full(1:i, :).^2, 1)) / i;
+                S2sterr = sqrt(sum(S2sterr_full(1:i, :).^2, 1)) / i;
                 value = mean(S1 ./ S2);
                 S1mean = mean(S1);
                 S2mean = mean(S2);

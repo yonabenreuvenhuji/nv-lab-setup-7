@@ -1,4 +1,4 @@
-function [x, signal, sterr, xName] = extract1Ddata(exp)
+function [x, signal, sterr, xName, lastAvg] = extract1Ddata(exp)
 
 axisParam = exp.mCurrentXAxisParam;
 if ~isempty(axisParam)
@@ -30,9 +30,13 @@ if lastAvg == 1
 end
 s = s1./s2;
 
-errorDistance = 8;                                          % number of std to assume a point is error
-s((abs(s-mean(s,2)) > (errorDistance*mean(std(s,1,2))))) = NaN;         % Active filtering for error results
-signal = nanmean(s,2)';
+if size(s, 2) > 6
+    errorDistance = 5;                                          % number of std to assume a point is error
+    s((abs(s-mean(s,2, 'Omitnan')) > (errorDistance*mean(std(s,1,2, 'Omitnan'))))) = NaN;         % Active filtering for error results
+    s((abs(s-mean(s,2, 'Omitnan')) > (3*mean(std(s,1,2, 'Omitnan'))))) = NaN;         % Active filtering for error results
+    s((abs(s-mean(s,2, 'Omitnan')) > (1*mean(std(s,1,2, 'Omitnan'))))) = NaN;         % Active filtering for error results
+end
+signal = mean(s,2, 'Omitnan');
 
 
 % Calculates the mean and standard error similar to the function 'Experiment.getRatioDistributionValues'

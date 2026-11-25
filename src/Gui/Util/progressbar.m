@@ -14,7 +14,22 @@ function h = progressbar(handle, varargin)
     if ishghandle(handle, 'axes')
         ax = handle;
         value = (varargin{1});
-        ptch = ax.Children;
+        % Other plotting code may have added children to these axes.
+        ptch = findobj(ax, 'Type', 'patch', 'Tag', 'ProgressbarFill');
+        if isempty(ptch)
+            % Support bars created before this helper was updated.
+            legacyPatch = findobj(ax, 'Type', 'patch');
+            if isscalar(legacyPatch) && numel(legacyPatch.XData) == 4
+                ptch = legacyPatch;
+                ptch.Tag = 'ProgressbarFill';
+            else
+                ptch = patch('Parent', ax, 'XData', [0 0 0 0], ...
+                    'YData', [0 1 1 0], 'FaceColor', [0 .75 0], ...
+                    'EdgeColor', 'none', 'PickableParts', 'none', ...
+                    'Tag', 'ProgressbarFill');
+            end
+        end
+        ptch = ptch(1);
         ptch.XData(3:4) = value;
         
         if nargin == 3
@@ -29,6 +44,9 @@ function h = progressbar(handle, varargin)
         % We first need to create the progress bar
         bg_color = [.6 .6 .6];        %'b';
         fg_color = [0 .75 0]; %'r';
+        parentFigure = ancestor(handle, 'figure');
+        previousAxes = parentFigure.CurrentAxes;
+        restoreAxes = onCleanup(@() set(parentFigure, 'CurrentAxes', previousAxes));
         handle = axes('Parent', handle, ...
             'Units',    'normalized', ...
             'XLim',     [0 1],      'YLim',     [0 1],...
@@ -39,7 +57,8 @@ function h = progressbar(handle, varargin)
         patch([0 0 0 0], [0 1 1 0], fg_color,...
             'Parent',    handle, ...
             'EdgeColor', 'none', ...
-            'PickableParts', 'none');
+            'PickableParts', 'none', ...
+            'Tag', 'ProgressbarFill');
         
         progressbar(handle, varargin{:});
         h = handle;

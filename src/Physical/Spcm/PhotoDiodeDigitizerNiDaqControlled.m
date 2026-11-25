@@ -1,8 +1,24 @@
 classdef PhotoDiodeDigitizerNiDaqControlled < Spcm & NiDaqControlled
+    % Scan fix, 2026-11-23: the detector owns the scan data.
+    % The stage moves to a pixel, waits until it is there, and calls
+    % acquireScanPixel(tPixel). readFromScan returns the line. The stage
+    % no longer prepares the digitizer or writes into this object.
+    %   scanAcquisitionMode = 'software' (default): one forced acquisition
+    %     per pixel. Checked on the hardware (scanDebug, 2026-11-23 14:19).
+    %   scanAcquisitionMode = 'trigger': the digitizer is armed once per
+    %     line for one segment per pixel, each started by a rising edge on
+    %     the pulse generator's 'detector' channel, and the line is read at
+    %     once. On Setup 7 the digitizer also triggers when that line goes
+    %     low after a segment has ended, so the pulse is now ended while
+    %     the segment is still being recorded (as in the experiments), and
+    %     a line where the digitizer finishes early is refused. Not yet
+    %     checked on the hardware; on 2026-11-23 it was also slower than
+    %     software mode.
     
     properties (Access = protected)
         % Backup, for NiDaq reset
         isEnabled   % logical
+        gateOnTic = []      % tic of the last off -> on switch of the photodiode gate
         
         % For time measure
         voltageIntegrationTime
@@ -10,9 +26,15 @@ classdef PhotoDiodeDigitizerNiDaqControlled < Spcm & NiDaqControlled
         voltageTimeTask
         
         % For scanning
-        nScanIntegration
+        nScanIntegration            % pixels per line
         scanningStageName
-        pixelTime
+        pixelTime                   % s, from prepareCountByStage (1D) or the stage
+        scanPixelIndex = 0          % pixels measured so far in this line
+        scanArmed = false           % digitizer configured/armed for this line
+        scanArmedPixelTime = []     % s, pixel time the digitizer is armed for
+        scanSegmentSeconds = 0      % s, length of one acquired segment (trigger mode)
+        scanArmTic                  % tic at arming (trigger mode)
+        scanTriggerTimes = []       % s since arming, one per pixel trigger (trigger mode)
         
         % For Experiment
         nExpIntegration
@@ -24,17 +46,30 @@ classdef PhotoDiodeDigitizerNiDaqControlled < Spcm & NiDaqControlled
         niDaqOffsetChannelName
     end
     
+    properties (SetAccess = protected)
+        current1DScanVoltageValues = [];    % last scan line, one value per pixel (filled by this object only)
+        current1DScanSterrValues = [];
+    end
+
     properties
-        currentChannelGUI = 1;     % The channnel to read by time and stage. we have 3 photodiode: #1: fluorescence, #2: laser sampling, #3: laser block (optional)
-        % PD fluorescence               % #1
-        % PD fluorescence Referenced    % #1 / (#2 normalized)
-        % PD laser sample               % #2
-        % PD laser block                % #3
-        % PD both                       % #1 + #2
+        % ---- scan acquisition, can be changed from the command line ----
+        scanAcquisitionMode = 'software'    % 'software' or 'trigger', see the class header
+        scanTriggerChannel = 'detector'     % pulse generator channel wired to the digitizer trigger input
+        scanTriggerMargin = 0.003           % s. Extra wait after a pixel's segment before the stage may move on
+        scanMaxSamplesPerPixel = 1e5        % caps the digitizer sample rate (<= 1 MHz) for long pixel times
+        gateSettleTime = 0.1                % s. Minimum time between switching the photodiode gate on and the first scan pixel
         
-        diffrentialInputGUI         % The input configuration to read by time and stage. options: #1: diffrential, #2: normal, #3: display both
-        balancedMeas = 0;           % boolean. If to measure both laser and flourescence and to normalize.
-        diffrentialInput
+        currentChannelGUI = 1;     % The channnel to read by time and stage. we have 3 channels: #1: fluorescence, #2: laser sampling, #3: laser block (optional)
+        % Options:
+        % 1: normal input           % #1
+        % 2: reference              % #2
+        % 3: both                   % #1 and #2
+        % 4: diffrential input      % #1 - #2
+        % 5: referenced input       % #1 / <#2>
+        % 6: laser block            % #3
+        
+        defultInputConfiguration
+        inputConfiguration
         digitizerChannelNames
         digitizerChannelValues
         segmentDuration
@@ -54,15 +89,16 @@ classdef PhotoDiodeDigitizerNiDaqControlled < Spcm & NiDaqControlled
     
     properties (Constant, Hidden)
         NEEDED_FIELDS = [Spcm.SPCM_NEEDED_FIELDS, {'nidaq_channel_gate', 'digitizer_channel_names', 'digitizer_channel_values', ...
-                         'input_configuration', 'reference_laser_measurement', 'voltage_offset', 'max_voltage', 'input_impedance'}];
+                         'defultd_input_configuration', 'voltage_offset', 'max_voltage', 'input_impedance'}];
         OPTIONAL_FIELDS = {'nidaq_channel_min_val', 'nidaq_channel_max_val', 'channel_delay', 'nidaq_channel_gate', 'nidaq_channel_offset'};
-        PHOTODIODE_OPTIONS = {'PD fluorescence', 'PD fluores norm', 'PD laser sample', 'PD laser block', 'PD both'};
+        INPUT_CONFIGURATIONS = {'nomral', 'differential', 'referenced'};             % Three optind for the voltage input: {IN1, IN1-IN2, IN1/<IN2>}
+        PHOTODIODE_OPTIONS = {'normal input', 'reference input', 'both inputs', 'differential', 'referenced', 'laser block'};
         TYPE_OPTIONS = {'diffrential', 'normal', 'diff - both'};
     end
 
     methods
-        function obj = PhotoDiodeDigitizerNiDaqControlled(name, niDaqGateChannel, digitizerChannelNames, digitizerChannelValues, inputConfiguration, ...
-                                                          referenceLaserMeasurement, channelDelay, maxVoltage, inputImpedance, voltageOffset, nidaqChannelOffset, channelMinValue, channelMaxValue)
+        function obj = PhotoDiodeDigitizerNiDaqControlled(name, niDaqGateChannel, digitizerChannelNames, digitizerChannelValues, defultInputConfiguration, ...
+                                                          channelDelay, maxVoltage, inputImpedance, voltageOffset, nidaqChannelOffset, channelMinValue, channelMaxValue)
             % Contructor, creates the object and registers the channels in the DAQ.
             obj@Spcm(name);
             niDaqGateChannelName = sprintf('%s_gate', name);
@@ -78,22 +114,14 @@ classdef PhotoDiodeDigitizerNiDaqControlled < Spcm & NiDaqControlled
             digi = Digitizer();
             
             obj.availableProperties.(obj.HAS_PHOTODIODE) = true;
-            if strcmpi(inputConfiguration, 'diff')
-                obj.availableProperties.(obj.HAS_DIFF_INPUT) = true;
-                obj.diffrentialInput = 1;
-                obj.diffrentialInputGUI = 1;
-            elseif strcmpi(inputConfiguration, 'norm')
-                obj.availableProperties.(obj.HAS_DIFF_INPUT) = false;
-                obj.diffrentialInput = 0;
-                obj.diffrentialInputGUI = 2;
-            else
-                obj.sendError('Digitizer input configuration can be only ''diff'' or ''norm''!');
+            obj.availableProperties.(obj.HAS_DUAL_INPUT) = any(strcmp(digitizerChannelNames, 'input_2'));
+            if ~any(strcmp(defultInputConfiguration, obj.INPUT_CONFIGURATIONS))
+                obj.sendError('Digitizer input configuration can be only ''normal'', ''differential'', or ''referenced''!');
             end
-            obj.availableProperties.(obj.HAS_LASER_REF) = referenceLaserMeasurement;
-            if referenceLaserMeasurement
-                obj.balancedMeas = 1;           % balanced meas as defult
-            end
-            
+            obj.defultInputConfiguration = defultInputConfiguration;
+            obj.inputConfiguration = defultInputConfiguration;
+
+
             obj.niDaqGateChannelName = niDaqGateChannelName;
             obj.niDaqOffsetChannelName = niDaqOffsetChannelName;
             obj.digitizerChannelNames = digitizerChannelNames;
@@ -119,6 +147,9 @@ classdef PhotoDiodeDigitizerNiDaqControlled < Spcm & NiDaqControlled
             % Enables/Disables the Integrator.
             daq = getObjByName(NiDaq.NAME);
             daq.writeDigital(obj.niDaqGateChannelName, newBooleanValue)
+            if newBooleanValue && ~(~isempty(obj.isEnabled) && obj.isEnabled)
+                obj.gateOnTic = tic;    % photodiode supply just switched on: scan pixels wait gateSettleTime
+            end
             obj.isEnabled = newBooleanValue;
         end
         
@@ -140,31 +171,39 @@ classdef PhotoDiodeDigitizerNiDaqControlled < Spcm & NiDaqControlled
             digi.forceAcquisition;
             digi.waitForDeviceReady;
             voltageFull = digi.readExperimentData(obj.activeChannelsGUI, true, true);
-            
-            if any(obj.currentChannelGUI == [1 2 5])
-                switch obj.diffrentialInputGUI
-                    case 1      % diffrential input
-                        v = squeeze(voltageFull(1, :, :))' - squeeze(voltageFull(2, :, :))';
-                    case 2      % normal input
-                        v = squeeze(voltageFull(1, :, :))';
-                    case 3      % normal input - both channels
-                        v = [squeeze(voltageFull(1, :, :))'; squeeze(voltageFull(2, :, :))'];
-                end
-            end
-            
+            [voltage, sterr] = obj.reduceSegments(voltageFull);     % one segment: scalar, or 2x1 for 'both inputs'
+        end
+
+        function [value, sterr] = reduceSegments(obj, voltageFull)
+            % One value per acquired segment, for the photodiode option in
+            % currentChannelGUI. Same arithmetic as readFromTime used before.
+            % voltageFull: [active channels x segments x samples], with
+            % the rows in the order of activeChannelsGUI.
+            % value, sterr: [1 x segments], or [2 x segments] for option 3.
+            % (Rows are indexed by position: the old code indexed them by
+            % channel number, which failed for option 2, 'reference'.)
+            nSeg = size(voltageFull, 2);
+            row = @(r) reshape(voltageFull(r, :, :), nSeg, []);     % [segments x samples]
             switch obj.currentChannelGUI
-                case 2          % PD fluorescence Referenced 
-                    laserRef = squeeze(voltageFull(end, :, :))';
-                    laserRef = laserRef / mean(laserRef);
-                    v = v ./ laserRef;
-                case {3, 4}     % laser PDs
-                    v = squeeze(voltageFull(1, :, :))';
-                case 5          % PD fluorescence & laser sample - both
-                    v = [v; squeeze(voltageFull(end, :, :))'];
+                case {1, 2, 6}  % normal input, reference, laser block: one channel acquired
+                    v = {row(1)};
+                case 3          % both channels
+                    v = {row(1), row(2)};
+                case 4          % differential input
+                    v = {row(1) - row(2)};
+                case 5          % referenced input: signal / (reference normalised to its mean in the segment)
+                    refSignal = row(2);
+                    refSignal = refSignal ./ mean(refSignal, 2, "omitnan");
+                    v = {row(1) ./ refSignal};
+                otherwise
+                    error('Unknown photodiode option %d', obj.currentChannelGUI);
             end
-            
-            voltage = mean(v, 2, "omitnan");
-            sterr = ste(v, 0, 2);
+            value = zeros(numel(v), nSeg);
+            sterr = zeros(numel(v), nSeg);
+            for k = 1:numel(v)
+                value(k, :) = mean(v{k}, 2, "omitnan")';
+                sterr(k, :) = ste(v{k}, 0, 2)';
+            end
         end
         
         function clearTimeRead(obj)
@@ -176,70 +215,134 @@ classdef PhotoDiodeDigitizerNiDaqControlled < Spcm & NiDaqControlled
     
     
     %%% By Stage %%%
-        function prepareCountByStage(obj, stageName, nPixels, timeout, fastScan, pixelTime)
-            % Prepare the photodiode to a scan by a stage. Before a multiline
-            % scan, this should be called only once.
-            if ~exist('pixelTime', 'var')
-                pixelTime = 0.01;
-            end
+    % Order of calls (StageScanner, unchanged):
+    %   prepareCountByStage -> [startScanCount -> stage.ScanNextLine /
+    %   stage.ScanX -> readFromScan] per line -> clearScanRead.
+    % During ScanNextLine the stage calls acquireScanPixel(tPixel) once per
+    % pixel, after it has arrived and settled.
+        function prepareCountByStage(obj, stageName, nPixels, timeout, fastScan, pixelTime) %#ok<INUSD>
+            % Prepare the photodiode for a scan by a stage: nPixels per
+            % line. Called once per scan (or chunk). pixelTime (s) is only
+            % passed by 1D scans; otherwise the stage gives it per pixel.
             if ~ValidationHelper.isValuePositiveInteger(nPixels)
-                obj.sendError('Can''t prepare for reading %s points, only positive integers allowed! Igonring');
+                obj.sendError(sprintf('Can''t prepare for reading %d points, only positive integers allowed!', nPixels));
             end
-            digi = getObjByName(Digitizer.NAME);
-            obj.nScanIntegration = nPixels;
+            if ~any(strcmpi(obj.scanAcquisitionMode, {'trigger', 'software'}))
+                obj.sendError(sprintf('scanAcquisitionMode must be ''trigger'' or ''software'', not ''%s''.', obj.scanAcquisitionMode));
+            end
+            if obj.currentChannelGUI == 3
+                obj.sendError('The ''both inputs'' photodiode option gives two values per pixel and cannot be scanned. Choose another option.');
+            end
             obj.scanningStageName = stageName;
-            obj.pixelTime = pixelTime * digi.UNIT_CONV;
-            sampleRate = 1;     % 1 MHz should be enough
-            digi.prepareAcquisition(obj.activeChannelsGUI, obj.nScanIntegration, obj.pixelTime, 1, sampleRate);
+            obj.nScanIntegration = nPixels;
+            if exist('pixelTime', 'var') && ~isempty(pixelTime)
+                obj.pixelTime = pixelTime;
+            else
+                obj.pixelTime = [];
+            end
+            obj.scanArmedPixelTime = [];
+            obj.resetScanLine();
         end
         
         function startScanCount(obj)
-            % Starts reading by scan, this should be called before every line.
-            digi = getObjByName(Digitizer.NAME);
-%             digi.stopAcquisition;
-%             digi.prepareAcquisition(obj.digitizerChannelNames, obj.nScanIntegration, obj.pixelTime);
-            digi.startExperiment;
+            % Called before every line: forget the previous line's pixels
+            % and disarm. The digitizer is armed at the line's first pixel,
+            % after the stage has reached it, so no trigger timeout can
+            % run out while the stage travels to the line start.
+            obj.resetScanLine();
+        end
+        
+        function acquireScanPixel(obj, tPixel)
+            % Measure one pixel of the current line (tPixel in s). The
+            % stage calls this when it is at the pixel and settled. Returns
+            % when the measurement is complete, so the stage may move on.
+            if isempty(obj.nScanIntegration) || obj.nScanIntegration < 1
+                error('acquireScanPixel called before prepareCountByStage.');
+            end
+            if obj.scanPixelIndex >= obj.nScanIntegration
+                error('Scan line has only %d pixels, but pixel %d was requested.', obj.nScanIntegration, obj.scanPixelIndex + 1);
+            end
+            if ~exist('tPixel', 'var') || isempty(tPixel)
+                tPixel = obj.pixelTime;
+            end
+            if obj.scanPixelIndex > 0 && ~isequal(tPixel, obj.scanArmedPixelTime)
+                error('Pixel time changed in the middle of a scan line.');
+            end
+            obj.waitForGate();
+            
+            i = obj.scanPixelIndex + 1;
+            if strcmpi(obj.scanAcquisitionMode, 'trigger')
+                if i == 1
+                    obj.armScanLine(tPixel);
+                end
+                obj.fireScanTrigger(i);         % data stays on the digitizer until readFromScan
+            else
+                if ~obj.scanArmed || ~isequal(tPixel, obj.scanArmedPixelTime)
+                    obj.prepareReadByTime(tPixel);
+                    obj.scanArmed = true;
+                    obj.scanArmedPixelTime = tPixel;
+                end
+                [v, e] = obj.readFromTime();
+                obj.current1DScanVoltageValues(i) = v(1);
+                obj.current1DScanSterrValues(i) = e(1);
+            end
+            obj.scanPixelIndex = i;
         end
         
         function [voltage, sterr] = readFromScan(obj)
-            % Read by scan. Reads a single line.
-            if obj.nScanIntegration <= 0
-                obj.sendError('Can''t read from Digitizer without calling ''prepare()''! ');
+            % Returns the current line, one value per pixel (row vectors).
+            % Errors if the line is incomplete or data are missing, so the
+            % scanner rescans the line.
+            n = obj.nScanIntegration;
+            if obj.scanPixelIndex ~= n
+                measured = obj.scanPixelIndex;
+                obj.resetScanLine();
+                error('Scan line incomplete: %d of %d pixels were measured.', measured, n);
             end
-            
-            digi = getObjByName(Digitizer.NAME);
-            voltageFull = digi.readExperimentData(obj.activeChannelsGUI, true, true);
-            if size(voltageFull, 2) ~= obj.nScanIntegration
-                error('wrong number of points acquired')
-            end
-            
-            if any(obj.currentChannelGUI == [1 2 5])
-                switch obj.diffrentialInputGUI
-                    case {1, 3}     % diffrential input
-                        v = voltageFull(1, :, :) - voltageFull(2, :, :);
-                    case 2          % normal input
-                        v = voltageFull(1, :, :);
+            if strcmpi(obj.scanAcquisitionMode, 'trigger')
+                digi = getObjByName(Digitizer.NAME);
+                obj.checkTriggerGaps(digi);
+                % Every pixel waited for its segment, so the acquisition
+                % should be complete now. If the digitizer still waits for
+                % a trigger, one was missed: discard the line now, rather
+                % than let the digitizer trigger itself after its timeout
+                % and shift the pixels.
+                status = CsMl_QueryStatus(digi.handle);
+                t = tic;
+                while status == 2 && toc(t) < 1      % 2 = last segment still being acquired
+                    status = CsMl_QueryStatus(digi.handle);
                 end
+                if status ~= 0
+                    digi.stopAcquisition;
+                    obj.scanArmed = false;
+                    error('Digitizer still waits for a trigger after the last pixel (status %d): a pixel trigger was missed, line discarded.', status);
+                end
+                digi.waitForDeviceReady;        % returns at once; restarts the timer readExperimentData uses
+                voltageFull = digi.readExperimentData(obj.activeChannelsGUI, true, true);
+                obj.scanArmed = false;
+                if size(voltageFull, 2) ~= n
+                    error('Digitizer returned %d segments for %d pixels.', size(voltageFull, 2), n);
+                end
+                [v, e] = obj.reduceSegments(voltageFull);
+                if any(isnan(v(1, :)))
+                    error('No digitizer data for pixel(s) %s of this line (missed trigger?).', mat2str(find(isnan(v(1, :)))));
+                end
+                obj.current1DScanVoltageValues = v(1, :);
+                obj.current1DScanSterrValues = e(1, :);
             end
-            
-            switch obj.currentChannelGUI
-                case {2, 5}         % PD fluorescence Referenced 
-                    laserRef = voltageFull(end, :, :);
-                    laserRef = laserRef ./ mean(laserRef, 3, "omitnan");
-                    v = v ./ laserRef;
-                case {3, 4}         % laser PDs
-                    v = voltageFull(1, :, :);
-            end
-            
-            v = squeeze(v);
-            voltage = mean(v, 2, "omitnan");
-            sterr = ste(v);
+            voltage = obj.current1DScanVoltageValues;
+            sterr = obj.current1DScanSterrValues;
         end
         
         function clearScanRead(obj)
             % Clear the task that scans from stage.
             digi = getObjByName(Digitizer.NAME);
             digi.stopAcquisition;
+            obj.scanArmed = false;
+            obj.scanArmedPixelTime = [];
+            if strcmpi(obj.scanAcquisitionMode, 'trigger')
+                obj.setTrigger(false);          % in case a pixel was interrupted
+            end
         end
     %%% End (By stage) %%%%
         
@@ -260,7 +363,7 @@ classdef PhotoDiodeDigitizerNiDaqControlled < Spcm & NiDaqControlled
             if obj.recordVoltageSpan
                 obj.voltageHistogram = struct;
                 obj.voltageHistogram.bins = -digi.maxVoltage(1):0.001:digi.maxVoltage(1);
-                obj.voltageHistogram.values = zeros(1+obj.diffrentialInput, length(obj.voltageHistogram.bins)-1);
+                obj.voltageHistogram.values = zeros(1+obj.hasDualInput, length(obj.voltageHistogram.bins)-1);
             end
             if ~isempty(obj.daqVolatgeOffset)
                 daq = getObjByName(NiDaq.NAME);
@@ -287,43 +390,32 @@ classdef PhotoDiodeDigitizerNiDaqControlled < Spcm & NiDaqControlled
                 vFull = voltageFull(1,:,:);
                 voltageHist = histcounts(vFull(:), obj.voltageHistogram.bins);
                 obj.voltageHistogram.values(1,:) = obj.voltageHistogram.values(1,:) + voltageHist;
-                if obj.diffrentialInput
+                if obj.hasDualInput
                     vFull = voltageFull(2,:,:);
                     voltageHist = histcounts(vFull(:), obj.voltageHistogram.bins);
                     obj.voltageHistogram.values(2,:) = obj.voltageHistogram.values(2,:) + voltageHist;
                 end
             end
 
-            diffAsBalanced = 1;
+            input_1 = obj.digitizerChannelValues(strcmp(obj.digitizerChannelNames, 'input_1'));
+            input_2 = obj.digitizerChannelValues(strcmp(obj.digitizerChannelNames, 'input_2'));
+            switch obj.inputConfiguration
+                case obj.INPUT_CONFIGURATIONS{1}                    % nomral
+                    v = voltageFull(input_1, :, :);
+                case obj.INPUT_CONFIGURATIONS{2}                    % differential
+                    v = voltageFull(input_1, :, :) - voltageFull(input_2, :, :);
+                case obj.INPUT_CONFIGURATIONS{3}                    % referenced
+                    ref = voltageFull(input_2, :, :);
+                    ref = mean(ref, 3, "omitnan");                  % mean over fast noise - we avarage it anyway
+                    ref = ref ./ mean(ref, 2, "omitnan");           % normalization to the mean value
+                    v = voltageFull(input_1, :, :) ./ ref;
+            end
 
-            if obj.diffrentialInput && ~diffAsBalanced
-                % diffSignal = voltageFull(2, :, :);
-                % diffSignal = mean(diffSignal, 3, "omitnan");                            % mean over fast noise - we avarage it anyway
-                % diffSignal = diffSignal ./ mean(diffSignal, 2, "omitnan");                % normalization to the mean value
-                % v = voltageFull(1, :, :) - diffSignal;
-                v = voltageFull(1, :, :) - voltageFull(2, :, :);
-                % v = voltageFull(2, :, :);
-            else
-                v = voltageFull(1, :, :);
-            end
-            
-            if obj.balancedMeas || diffAsBalanced
-                % v = voltageFull(end, :, :);
-                laserRef = voltageFull(end, :, :);
-                laserRef = mean(laserRef, 3, "omitnan");                            % mean over fast noise - we avarage it anyway
-                laserRef = laserRef ./ mean(laserRef, 2, "omitnan");                % normalization to the mean value
-                v = v ./ laserRef;
-            end
-            
             v = squeeze(v);
             if ~obj.fullDataAcquisition
                 voltage = mean(v, 2, "omitnan");
             else
                 voltage = v;
-            end
-
-            if mean(voltage(1:2:end) ./ voltage(2:2:end), "omitnan") < 0
-                q = 1;
             end
         end
         
@@ -341,6 +433,140 @@ classdef PhotoDiodeDigitizerNiDaqControlled < Spcm & NiDaqControlled
     %%% End (by PulseGenerator) %%%
     end
     
+    methods (Access = protected) % scan helpers
+        function resetScanLine(obj)
+            % Empty line buffer, disarm the digitizer if it was armed.
+            if obj.scanArmed && strcmpi(obj.scanAcquisitionMode, 'trigger')
+                digi = getObjByName(Digitizer.NAME);
+                digi.stopAcquisition;
+                obj.scanArmed = false;
+            end
+            obj.scanPixelIndex = 0;
+            obj.scanTriggerTimes = [];
+            n = obj.nScanIntegration;
+            if isempty(n); n = 0; end
+            obj.current1DScanVoltageValues = nan(1, n);
+            obj.current1DScanSterrValues = nan(1, n);
+        end
+
+        function armScanLine(obj, tPixel)
+            % Trigger mode: configure the digitizer for one segment of
+            % tPixel per pixel, external trigger, and arm it.
+            digi = getObjByName(Digitizer.NAME);
+            obj.setTrigger(false);                  % so the first pixel gives a rising edge
+            tUs = tPixel * digi.UNIT_CONV;
+            rate = obj.scanSampleRate(tUs, digi);
+            digi.prepareAcquisition(obj.activeChannelsGUI, obj.nScanIntegration, tUs, 1, rate);
+            % actual segment: rounded up to whole 32-sample blocks (+ channel delay)
+            obj.scanSegmentSeconds = digi.segmentPostTrigSize / digi.sampleRate / digi.UNIT_CONV;
+            digi.startExperiment;                   % armed: waits for nScanIntegration triggers
+            obj.scanArmed = true;
+            obj.scanArmedPixelTime = tPixel;
+            obj.scanArmTic = tic;
+            obj.scanTriggerTimes = [];
+        end
+
+        function fireScanTrigger(obj, i)
+            % Trigger pixel i of the line with a short pulse: the rising
+            % edge starts the pixel's segment, and the line goes low again
+            % while that segment is still being recorded, so the digitizer
+            % ignores that edge, as in the experiments. (On Setup 7 the
+            % low-going edge starts an extra segment if it comes after the
+            % segment has ended: scanDebug, 2026-11-23.) Returns once the
+            % segment is complete. Errors, so the line is rescanned, if
+            % the digitizer finished early or the pulse may have outlasted
+            % the segment.
+            tCall = toc(obj.scanArmTic);
+            obj.setTrigger(true);
+            tOn = toc(obj.scanArmTic);          % the rising edge happened before this
+            obj.setTrigger(false);
+            tOff = toc(obj.scanArmTic);         % ... and the falling edge before this
+            obj.scanTriggerTimes(end+1) = tOn;
+            obj.waitSeconds(obj.scanSegmentSeconds + obj.scanTriggerMargin - (tOff - tOn));
+
+            digi = getObjByName(Digitizer.NAME);
+            n = obj.nScanIntegration;
+            if i < n && CsMl_QueryStatus(digi.handle) == 0
+                digi.stopAcquisition;
+                obj.scanArmed = false;
+                error('Digitizer finished after pixel %d of %d (it took extra segments): line discarded.', i, n);
+            end
+            if tOff - tCall >= obj.scanSegmentSeconds
+                digi.stopAcquisition;
+                obj.scanArmed = false;
+                error(['Trigger pulse for pixel %d took up to %.1f ms, longer than the %.1f ms segment, so the digitizer ', ...
+                    'may have taken an extra segment: line discarded. Use scanAcquisitionMode = ''software'' or a longer pixel time.'], ...
+                    i, 1e3 * (tOff - tCall), 1e3 * obj.scanSegmentSeconds);
+            end
+        end
+
+        function setTrigger(obj, value)
+            pg = getObjByName(PulseGenerator.NAME);
+            if isempty(pg)
+                error('Scan trigger mode needs the pulse generator (channel ''%s''). Set scanAcquisitionMode = ''software''.', obj.scanTriggerChannel);
+            end
+            if value
+                pg.On(obj.scanTriggerChannel);
+            else
+                pg.Off(obj.scanTriggerChannel);
+            end
+        end
+
+        function checkTriggerGaps(obj, digi)
+            % The digitizer triggers itself after acqInfo.TriggerTimeout
+            % (us) without a trigger, which would shift the pixels. Refuse
+            % the line if any wait came close to that.
+            limit = 0.8 * double(digi.acqInfo.TriggerTimeout) / 1e6;
+            gaps = diff([0, obj.scanTriggerTimes]);
+            if limit > 0 && any(gaps > limit)
+                error('%.1f s between two pixel triggers (digitizer timeout %.0f s): line discarded.', max(gaps), limit / 0.8);
+            end
+        end
+
+        function waitForGate(obj)
+            % After the photodiode supply is switched on, give it
+            % gateSettleTime before the first pixel.
+            if ~isempty(obj.gateOnTic)
+                remaining = obj.gateSettleTime - toc(obj.gateOnTic);
+                if remaining > 0
+                    pause(remaining);
+                end
+                if toc(obj.gateOnTic) >= obj.gateSettleTime
+                    obj.gateOnTic = [];
+                end
+            end
+        end
+
+        function rate = scanSampleRate(obj, tUs, digi)
+            % Highest rate <= 1 MHz (the read-by-time rate) that keeps a
+            % pixel below scanMaxSamplesPerPixel samples, preferring rates
+            % that give a whole number of samples.
+            rates = digi.AVALIABLE_SAMPLE_RATES(digi.AVALIABLE_SAMPLE_RATES <= 1);    % MHz, descending
+            ok = rates(tUs .* rates <= obj.scanMaxSamplesPerPixel);
+            if isempty(ok)
+                ok = rates(end);
+            end
+            whole = abs(tUs .* ok - round(tUs .* ok)) < 1e-6 & round(tUs .* ok) >= 1;
+            if any(whole)
+                rate = ok(find(whole, 1));
+            else
+                rate = ok(1);
+            end
+        end
+    end
+
+    methods (Static, Access = protected)
+        function waitSeconds(seconds)
+            % pause() for most of it, then spin: never returns early.
+            t = tic;
+            if seconds > 0.005
+                pause(seconds - 0.003);
+            end
+            while toc(t) < seconds
+            end
+        end
+    end
+
     methods
         function onNiDaqReset(obj)
             % This function jumps when the NiDaq resets
@@ -356,32 +582,26 @@ classdef PhotoDiodeDigitizerNiDaqControlled < Spcm & NiDaqControlled
         end
         
         function channels = get.activeChannelsGUI(obj)
-            FLchan = find(strcmp({'input'}, obj.digitizerChannelNames));
-            if any(obj.diffrentialInputGUI == [1 3])
-                FLchan = [FLchan, find(strcmp({'input_inverse'}, obj.digitizerChannelNames))];
-            end
-            laserSampleChan = find(strcmp({'laser_sample'}, obj.digitizerChannelNames));
+            signalChan = find(strcmp({'input_1'}, obj.digitizerChannelNames));
+            referenceChan = find(strcmp({'input_2'}, obj.digitizerChannelNames));
             laserBlockChan = find(strcmp({'laser_block'}, obj.digitizerChannelNames));
             
             switch obj.currentChannelGUI
-                case 1          % PD fluorescence
-                    channels = FLchan;
-                case {2, 5}     % PD fluorescence Referenced / both
-                    channels = [FLchan, laserSampleChan];
-                case 3          % PD laser sample
-                    channels = laserSampleChan;
-                case 4          % PD laser block
+                case 1
+                    channels = signalChan;
+                case 2
+                    channels = referenceChan;
+                case {3, 4, 5}
+                    channels = [signalChan, referenceChan];
+                case 6
                     channels = laserBlockChan;
             end
         end
-        
+
         function channels = get.activeChannelsMeas(obj)
-            channels = find(strcmp({'input'}, obj.digitizerChannelNames));
-            if obj.diffrentialInput
-                channels = [channels, find(strcmp({'input_inverse'}, obj.digitizerChannelNames))];
-            end
-            if obj.balancedMeas
-                channels = [channels, find(strcmp({'laser_sample'}, obj.digitizerChannelNames))];
+            channels = find(strcmp({'input_1'}, obj.digitizerChannelNames));
+            if obj.hasDualInput
+                channels = [channels, find(strcmp({'input_2'}, obj.digitizerChannelNames))];
             end
         end
 
@@ -423,12 +643,11 @@ classdef PhotoDiodeDigitizerNiDaqControlled < Spcm & NiDaqControlled
             minVal = PhotoDiodeStruct.nidaq_channel_min_val;
             maxVal = PhotoDiodeStruct.nidaq_channel_max_val;
             voltageOffset = PhotoDiodeStruct.voltage_offset;
-            inputConfiguration = PhotoDiodeStruct.input_configuration;
-            referenceLaserMeasurement = PhotoDiodeStruct.reference_laser_measurement;
+            defultInputConfiguration = PhotoDiodeStruct.defultd_input_configuration;
             nidaqChannelOffset = PhotoDiodeStruct.nidaq_channel_offset;
             channelDelay = PhotoDiodeStruct.channel_delay;
             PhotoDiodeObj = PhotoDiodeDigitizerNiDaqControlled(PhotoDiodeName, gate, digitizerChannelNames, digitizerChannelValues, ...
-                        inputConfiguration, referenceLaserMeasurement, channelDelay, maxVoltage, inputImpedance, voltageOffset, nidaqChannelOffset, minVal, maxVal);
+                        defultInputConfiguration, channelDelay, maxVoltage, inputImpedance, voltageOffset, nidaqChannelOffset, minVal, maxVal);
         end
     end
     

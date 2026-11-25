@@ -657,7 +657,7 @@ classdef ImageScanResult < Savable & EventSender & EventListener
             % Output:
             % fullpath - the fullpath of the image file that was saved
             
-            if isempty(obj.mData) || isempty(obj.mData); return; end
+            if isempty(obj.mData); return; end
             
             isVisible = false;
             figureInvis = obj.copyToFigure(isVisible);

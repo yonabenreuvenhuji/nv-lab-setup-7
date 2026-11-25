@@ -1,4 +1,4 @@
-function [x, signal, signal_1, signal_2, sterr, sterr_1, sterr_2, xName] = extract2Ddata(exp)
+function [x, signal, signal_1, signal_2, sterr, sterr_1, sterr_2, xName, lastAvg] = extract2Ddata(exp)
 
 axisParam = exp.mCurrentXAxisParam;
 if ~isempty(axisParam)

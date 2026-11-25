@@ -15,7 +15,6 @@ classdef (Abstract) ExperimentAWG < Experiment
         frequency           % in MHz
         amplitude       % in dBm
         constantTime
-        balancedSequence = 0;       % true to define the reference detection after dark widow equal ti the measurement.
     end
     
     properties (SetAccess = protected)
@@ -39,6 +38,7 @@ classdef (Abstract) ExperimentAWG < Experiment
         function set.amplitude(obj, newVal) % newVal is in dBm
             checkAmplitude(obj, newVal)
             % If we got here, then newVal is OK.
+            %%A2=10.7117*sin(0.048*A1-4.6333)+1.0252*sin(0.2927)
             newVal = reshape(newVal, 1, length(newVal));
             ampDiff = reshape(obj.amplitudeDiff, 1, length(obj.amplitudeDiff));
             obj.amplitude = newVal + ampDiff;
@@ -151,7 +151,7 @@ classdef (Abstract) ExperimentAWG < Experiment
 %         end
         
         function checkPhases(obj, newVal)
-            if ismember(0, (newVal == 'X') + (newVal == 'Y'))
+            if ismember(0, (newVal=='X') + (newVal=='Y'))
                 obj.sendError('Phase array must contain just ''X'' and ''Y'' characters')
             end
         end
@@ -239,7 +239,7 @@ classdef (Abstract) ExperimentAWG < Experiment
             end
             commonFrequency = frequencies(1);
             for i = 2:length(frequencies)
-                commonFrequency = gcd(commonFrequency*1000, round(frequencies(i))*1000)/1000;
+                commonFrequency = gcd(round(commonFrequency)*1000, round(frequencies(i))*1000)/1000; %round added for commonfrequency by Yarden 26.8.26
             end
             if roundUpwards
                 if roundUpwards > 0
@@ -250,6 +250,17 @@ classdef (Abstract) ExperimentAWG < Experiment
             else
                 RoundDuration  = round(duration * commonFrequency)/commonFrequency;
             end
+        end
+
+        function nCycles = seamlessCycles(obj, freqMHz, minSamples, maxSamples)
+            % Whole number of MW cycles whose length, rounded to whole samples,
+            % joins back onto itself with the smallest phase jump.
+            S = obj.AWG.SampleRate;
+            n = ceil(minSamples*freqMHz/S) : floor(maxSamples*freqMHz/S);
+            exact = n*S/freqMHz;
+            seam  = abs(round(exact) - exact) * freqMHz / S;   % jump, in cycles
+            [~, k] = min(seam);
+            nCycles = n(k);
         end
     end
 end

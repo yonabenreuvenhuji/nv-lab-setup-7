@@ -109,22 +109,16 @@ classdef AWGExpDigitizerInitDuration < ExperimentAWG
             end
             
             S = Sequence;
-            S.addEvent(1,                               MW)
             S.addEvent(obj.AWG.TRIG_DURATION,       [triggers(:)', MW(:)']);                        % AWG trigger
-            S.addEvent(obj.piTime,                  MW);                                            % MW
-            S.addEvent(1,                               MW)
-            S.addEvent(obj.lastDelay,               '');                                            % Last delay
-%             S.addEvent(0.05,       'detector');
+            S.addEvent(obj.piTime,                  MW,                         'MW')               % MW
+            S.addEvent(obj.lastDelay,               MW,                         'lastDelay');       % Last delay
             S.addEvent(obj.detectionDuration,       {'greenLaser', 'detector'});                    % Detection
             
             S.addEvent(initDuration,                'greenLaser');                                  % Initialization
             
-            S.addEvent(1,                           '')
             S.addEvent(obj.AWG.TRIG_DURATION,       '');                                            % ref
             S.addEvent(obj.piTime,                  '');                                            % ref
-            S.addEvent(1,                           '')
             S.addEvent(obj.lastDelay,                   '');                                        % ref
-%             S.addEvent(0.05,       'detector');
             S.addEvent(obj.referenceDetectionDuration, ...
                                                     {'greenLaser', 'detector'});                    % Reference detection
             S.addEvent(initDuration,                'greenLaser');                                  % Initialization

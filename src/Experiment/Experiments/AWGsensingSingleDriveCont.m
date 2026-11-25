@@ -1,5 +1,5 @@
 classdef AWGsensingSingleDriveCont < ExperimentAWG
-    % This experiment for high frequenct sensing besed on Fedor's artcile:
+    % This experiment for high frequency sensing besed on Fedor's artcile:
     % https://www.nature.com/articles/s41467-017-01159-2
     
     properties (Constant)

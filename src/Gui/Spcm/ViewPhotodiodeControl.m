@@ -4,22 +4,18 @@ classdef ViewPhotodiodeControl < GuiComponent
     
     properties
         photodiodeSelection     % we have 3 photodiode: #1: fluorescence, #2: laser sampling, #3: laser block (optional)
-        radioPDfluores          % #1
-        radioPDfluoresRef       % #1 / (#2 normalized)
-        radioPDlaserSample      % #2
-        radioPDlaserBlock       % #3
-        radioPDboth             % #1 + #2
-        
-        TypeSelection           % acquisition types for PD #1:
-        radioDiff               % diffrential (2 digitizer channels - substruct)
-        radioNorm               % normal (1 digitizer channel)
-        radioBoth               % present both diffrential channels
+        radioNormalInput        % #1
+        radioRefInput           % #2
+        radioBothInput          % #1 and #2
+        radioDifferential       % #1 - <#2>
+        radioReferenced         % #1 / <#2>
+        radioLaserBlock         % #3
         
         cbxLifetime
         edtFrom
         edtTo
     end
-    
+
     methods
         function obj = ViewPhotodiodeControl(parent, controller)
             obj@GuiComponent(parent, controller);
@@ -32,51 +28,37 @@ classdef ViewPhotodiodeControl < GuiComponent
                 'Title', 'Photodiode Control', ...
                 'SelectionChangedFcn',@obj.callbackPhotodiodeRadioSelection);
             
-            rbHeight = 13; % "rb" stands for "radio button"
-            rbWidth = 100;
+            rbHeight = 15; % "rb" stands for "radio button"
+            rbWidth = 150;
             paddingFromLeft = 10;
             
-            obj.radioPDfluores = uicontrol(obj.PROP_RADIO{:}, 'Parent', obj.photodiodeSelection, ...
-                'String', 'FL', ...
+            obj.radioNormalInput = uicontrol(obj.PROP_RADIO{:}, 'Parent', obj.photodiodeSelection, ...
+                'String', 'signal', ...
                 'Position', [paddingFromLeft 60 rbWidth rbHeight], ...  % [fromLeft, fromBottom, width, height]
                 'Tag', PhotoDiodeDigitizerNiDaqControlled.PHOTODIODE_OPTIONS{1});
-            obj.radioPDfluoresRef = uicontrol(obj.PROP_RADIO{:}, 'Parent', obj.photodiodeSelection, ...
-                'String', 'FL norm', ...
+            obj.radioRefInput = uicontrol(obj.PROP_RADIO{:}, 'Parent', obj.photodiodeSelection, ...
+                'String', 'reference', ...
                 'Position', [paddingFromLeft 35 rbWidth rbHeight], ...  % [fromLeft, fromBottom, width, height]
                 'Tag', PhotoDiodeDigitizerNiDaqControlled.PHOTODIODE_OPTIONS{2});
-            obj.radioPDlaserSample = uicontrol(obj.PROP_RADIO{:}, 'Parent', obj.photodiodeSelection, ...
-                'String', 'laser sample', ...
-                'Position', [paddingFromLeft 10 rbWidth rbHeight], ...  % [fromLeft, fromBottom, width, height]
-                'Tag', PhotoDiodeDigitizerNiDaqControlled.PHOTODIODE_OPTIONS{3});
-            obj.radioPDlaserBlock = uicontrol(obj.PROP_RADIO{:}, 'Parent', obj.photodiodeSelection, ...
-                'String', 'laser block', ...
-                'Position', [paddingFromLeft+rbWidth-5 60 rbWidth+30 rbHeight], ...  % [fromLeft, fromBottom, width, height]
-                'Tag', PhotoDiodeDigitizerNiDaqControlled.PHOTODIODE_OPTIONS{4});
-            obj.radioPDboth = uicontrol(obj.PROP_RADIO{:}, 'Parent', obj.photodiodeSelection, ...
-                'String', 'FL & laser sample', ...
-                'Position', [paddingFromLeft+rbWidth-5 35 rbWidth+30 rbHeight], ...  % [fromLeft, fromBottom, width, height]
-                'Tag', PhotoDiodeDigitizerNiDaqControlled.PHOTODIODE_OPTIONS{5});
-            
-            obj.TypeSelection = uibuttongroup(...
-                'Parent', hboxMain, ...
-                'Title', 'Acquisition Type', ...
-                'SelectionChangedFcn',@obj.callbackTypeRadioSelection);
-            
-            obj.radioDiff = uicontrol(obj.PROP_RADIO{:}, 'Parent', obj.TypeSelection, ...
-                'String', 'Diffrential', ...
-                'Position', [paddingFromLeft 60 rbWidth rbHeight], ...  % [fromLeft, fromBottom, width, height]
-                'Tag', PhotoDiodeDigitizerNiDaqControlled.TYPE_OPTIONS{1});
-            obj.radioNorm = uicontrol(obj.PROP_RADIO{:}, 'Parent', obj.TypeSelection, ...
-                'String', 'Normal', ...
-                'Position', [paddingFromLeft 35 rbWidth rbHeight], ...  % [fromLeft, fromBottom, width, height]
-                'Tag', PhotoDiodeDigitizerNiDaqControlled.TYPE_OPTIONS{2});
-            obj.radioBoth = uicontrol(obj.PROP_RADIO{:}, 'Parent', obj.TypeSelection, ...
-                'String', 'Diffrential - Both', ...
+            obj.radioBothInput = uicontrol(obj.PROP_RADIO{:}, 'Parent', obj.photodiodeSelection, ...
+                'String', 'signal & reference', ...
                 'Position', [paddingFromLeft 10 rbWidth+30 rbHeight], ...  % [fromLeft, fromBottom, width, height]
-                'Tag', PhotoDiodeDigitizerNiDaqControlled.TYPE_OPTIONS{3});
+                'Tag', PhotoDiodeDigitizerNiDaqControlled.PHOTODIODE_OPTIONS{3});
+            obj.radioDifferential = uicontrol(obj.PROP_RADIO{:}, 'Parent', obj.photodiodeSelection, ...
+                'String', 'differential (sig-ref)', ...
+                'Position', [paddingFromLeft+rbWidth-5 60 rbWidth+40 rbHeight], ...  % [fromLeft, fromBottom, width, height]
+                'Tag', PhotoDiodeDigitizerNiDaqControlled.PHOTODIODE_OPTIONS{4});
+            obj.radioReferenced = uicontrol(obj.PROP_RADIO{:}, 'Parent', obj.photodiodeSelection, ...
+                'String', 'referenced (sig/<ref>)', ...
+                'Position', [paddingFromLeft+rbWidth-5 35 rbWidth+40 rbHeight], ...  % [fromLeft, fromBottom, width, height]
+                'Tag', PhotoDiodeDigitizerNiDaqControlled.PHOTODIODE_OPTIONS{5});
+            obj.radioLaserBlock = uicontrol(obj.PROP_RADIO{:}, 'Parent', obj.photodiodeSelection, ...
+                'String', 'laser block', ...
+                'Position', [paddingFromLeft+rbWidth-5 10 rbWidth+40 rbHeight], ...  % [fromLeft, fromBottom, width, height]
+                'Tag', PhotoDiodeDigitizerNiDaqControlled.PHOTODIODE_OPTIONS{6});
             
-            hboxMain.Widths = [-1 130];
-            obj.height = 100;
+            hboxMain.Widths = [-1];
+            obj.height = 90;
             obj.width = -1;
             
             obj.update()
@@ -85,74 +67,35 @@ classdef ViewPhotodiodeControl < GuiComponent
         function update(obj)
             % Executes when spcm updates
             spcm = getObjByName(Spcm.NAME);
-            obj.radioPDfluores.Enable = 'on';
-            if spcm.availableProperties.(spcm.HAS_LASER_REF)
-                obj.radioPDfluoresRef.Enable = 'on';
-                if obj.TypeSelection.SelectedObject ~= obj.radioBoth
-                    obj.radioPDlaserSample.Enable = 'on';
-                    obj.radioPDlaserBlock.Enable = 'on';
-                    obj.radioPDboth.Enable = 'on';
-                else
-                    obj.radioPDlaserSample.Enable = 'off';
-                    obj.radioPDlaserBlock.Enable = 'off';
-                    obj.radioPDboth.Enable = 'off';
-                    if any(spcm.currentChannelGUI == [3 4 5])
-                        spcm.currentChannelGUI = 1;
-                    end
-                end
-            else
-                obj.radioPDfluoresRef.Enable = 'off';
-                obj.radioPDlaserSample.Enable = 'off';
-                obj.radioPDlaserBlock.Enable = 'off';
-                obj.radioPDboth.Enable = 'off';
-            end
+            obj.radioNormalInput.Enable = 'on';
+            obj.radioReferenced.Enable = 'on';
             
-            obj.radioNorm.Enable = 'on';
-            if spcm.availableProperties.(spcm.HAS_DIFF_INPUT)
-                obj.radioDiff.Enable = 'on';
-                obj.radioBoth.Enable = 'on';
-            else
-                obj.radioDiff.Enable = 'off';
-                obj.radioBoth.Enable = 'off';
-            end
-            
-            obj.radioPDfluores.Value = 0;
-            obj.radioPDfluoresRef.Value = 0;
-            obj.radioPDlaserSample.Value = 0;
-            obj.radioPDlaserBlock.Value = 0;
-            obj.radioPDboth.Value = 0;
+            obj.radioNormalInput.Value = 0;
+            obj.radioReferenced.Value = 0;
+            obj.radioRefInput.Value = 0;
+            obj.radioLaserBlock.Value = 0;
+            obj.radioBothInput.Value = 0;
             switch spcm.currentChannelGUI
                 case 1
-                    obj.radioPDfluores.Value = 1;
-                    obj.photodiodeSelection.SelectedObject = obj.radioPDfluores;
+                    obj.radioNormalInput.Value = 1;
+                    obj.photodiodeSelection.SelectedObject = obj.radioNormalInput;
                 case 2
-                    obj.radioPDfluoresRef.Value = 1;
-                    obj.photodiodeSelection.SelectedObject = obj.radioPDfluoresRef;
+                    obj.radioRefInput.Value = 1;
+                    obj.photodiodeSelection.SelectedObject = obj.radioRefInput;
                 case 3
-                    obj.radioPDlaserSample.Value = 1;
-                    obj.photodiodeSelection.SelectedObject = obj.radioPDlaserSample;
+                    obj.radioBothInput.Value = 1;
+                    obj.photodiodeSelection.SelectedObject = obj.radioBothInput;
                 case 4
-                    obj.radioPDlaserBlock.Value = 1;
-                    obj.photodiodeSelection.SelectedObject = obj.radioPDlaserBlock;
+                    obj.radioDifferential.Value = 1;
+                    obj.photodiodeSelection.SelectedObject = obj.radioDifferential;
                 case 5
-                    obj.radioPDboth.Value = 1;
-                    obj.photodiodeSelection.SelectedObject = obj.radioPDboth;
+                    obj.radioReferenced.Value = 1;
+                    obj.photodiodeSelection.SelectedObject = obj.radioReferenced;
+                case 6
+                    obj.radioLaserBlock.Value = 1;
+                    obj.photodiodeSelection.SelectedObject = obj.radioLaserBlock;
             end
-            
-            obj.radioDiff.Value = 0;
-            obj.radioNorm.Value = 0;
-            obj.radioBoth.Value = 0;
-            switch spcm.diffrentialInputGUI
-                case 1
-                    obj.radioDiff.Value = 1;
-                    obj.TypeSelection.SelectedObject = obj.radioDiff;
-                case 2
-                    obj.radioNorm.Value = 1;
-                    obj.TypeSelection.SelectedObject = obj.radioNorm;
-                case 3
-                    obj.radioBoth.Value = 1;
-                    obj.TypeSelection.SelectedObject = obj.radioBoth;
-            end
+
         end
         
         %%%% Callbacks %%%%

@@ -196,7 +196,7 @@ classdef AWGExpHelmholtzAlignment < AWGExpESR
             if obj.measurDim == 1
                 yyaxis left
                 plot(obj.scan_values, squeeze(obj.helm_ESR_centers(:,1,:)), '-b', 'Color', [0 0.4470 0.7410]);
-                ylabel(lorenzParamName);
+                ylabel('resonance');
                 yyaxis right
                 plot(obj.scan_values, lorenzParam(:,:), '-b', 'Color', [0.8500 0.3250 0.0980]);
                 ylabel(lorenzParamName);
@@ -204,7 +204,7 @@ classdef AWGExpHelmholtzAlignment < AWGExpESR
                 yyaxis left
                 plot(obj.scan_values, squeeze(obj.helm_ESR_centers(:,1,1)), '-b',  'Color', [0 0.4470 0.7410]);
                 plot(obj.scan_values, squeeze(obj.helm_ESR_centers(:,1,2)), '--b', 'Color', [0 0.4470 0.7410]);
-                ylabel('Fitted frequency')
+                ylabel('resonance')
                 yyaxis right
                 plot(obj.scan_values, lorenzParam(:,1), '-b',  'Color', [0.8500 0.3250 0.0980]);
                 plot(obj.scan_values, lorenzParam(:,2), '--b', 'Color', [0.8500 0.3250 0.0980]);

@@ -1,4 +1,4 @@
-function [f0, width, contrast, SNR, coeffError, fitObj] = ESRfit(Exp, toSave, path, toPlot)
+function [f0, width, contrast, SNR, coeffError, fitObj] = ESRfit(Exp, toSave, path, toPlot, varargin)
 % ofir hacker 31.31.22 (Edited Yachel 18.06.23)
 % The function receives an ESR experiment and returns the center frequency, width, contrast and fit object.
 % In case of mirrored frequency all of the output variable are vectors [1, 2]
@@ -23,6 +23,8 @@ mirrored = ~isempty(Exp.mirrorSweepAround);
 
 % Extract data:
 [freq, signal, sterr, signal_2, sterr_2] = extractESRdata(Exp);
+nans = isnan(signal);
+freq(nans) = []; signal(nans) = []; sterr(nans) = [];
 signal = reshape(signal,[length(signal) 1]);
 sterr = reshape(sterr,[length(sterr) 1]);
 signal_2 = reshape(signal_2,[length(signal_2) 1]);
@@ -30,7 +32,7 @@ sterr_2 = reshape(sterr_2,[length(sterr_2) 1]);
 freq = reshape(freq,[length(freq) 1]);
 
 % Fit:
-[fitObj, gof] = ESRfitInternal(freq, signal, sterr);
+[fitObj, gof] = ESRfitInternal(freq, signal, sterr, varargin{:});
 coeff = coeffvalues(fitObj);
 contrast = coeff(1);
 f0 = coeff(2);
@@ -50,7 +52,8 @@ coeffError = fitStd(fitObj, gof);
 
 % Plot:
 if toPlot
-    figure; hold on;
+    figure; 
+    hold on;
     fi = freq(1):0.01:freq(end);
     fitLine = plot(fi, fitObj(fi), 'color', [0, 0.4470, 0.7410], 'LineWidth', 2, 'DisplayName', 'Normal');
     dataPoints = errorbar(freq, signal, sterr, '.', 'color', 'b', 'MarkerSize', 7);
@@ -61,9 +64,9 @@ if toPlot
         dispData = sprintf('$f_0=%.1f/%.1f \\, MHz$ \n$Contrast=%.2f/%.2f\\%%$ \n$FWHM(2\\gamma)=%.2f/%.2f\\, MHz$ \n$SNR/\\sqrt{n}=%.3f$', f0, contrast*100, width, mean(SNR));
         legend([fitLine, fitLine2], 'Location', 'southeast');
     end
-    annotation('textbox', [0.4,0.7,0.5,0.22], 'String', dispData, 'Interpreter', 'Latex', 'FontSize', 14, 'BackgroundColor', [1 1 1]);
+    % annotation('textbox', [0.4,0.7,0.5,0.22], 'String', dispData, 'Interpreter', 'Latex', 'FontSize', 14, 'BackgroundColor', [1 1 1]);
     set(gca,'FontSize',14);
-    ylim([min([signal; signal_2]) - max(sterr), max([signal; signal_2]) + max(sterr) + contrast(1)/2]);
+    % ylim([min([signal; signal_2]) - max(sterr), max([signal; signal_2]) + max(sterr) + contrast(1)/2]);
     grid on
     box on
 end
@@ -81,20 +84,47 @@ if toSave
 end
 
 
-    function [fitObj, gof] = ESRfitInternal(freq, signal, sterr)
+    function [fitObj, gof] = ESRfitInternal(freq, signal, sterr, varargin)
         % Calculates start points:
         cont = max(signal) - min(signal);
+        lowerCont = 0.5 * cont;
+        upperCont = 1.5 * cont;
+
         baseLine = mean(signal([1:5, end-5:end]));
         [~, i] = min(signal);
         center = freq(i);
         df = mean(diff(freq));
         g = df * sum(signal < baseLine - cont/2) / 2;
+        g = max([g, 10]);
+        
+        N = length(signal);
+        if mean(signal(round(N/2) + (-10:1:10))) > mean(signal([1:10, end-10:end]))
+            cont = -cont;
+            lowerCont = 1.5 * cont;
+            upperCont = 0.5 * cont;
+        end
+
+        while ~isempty(varargin)
+            switch varargin{1}
+                case 'a'
+                    cont = varargin{2};
+                case 'f0'
+                    center = varargin{2};
+                case 'g'
+                    g = varargin{2};
+                case 'c'
+                    baseLine = varargin{2};
+                otherwise
+                    error('no field "%s" in rabi fit', varargin{1})
+            end
+            varargin(1:2) = [];
+        end
         
         % Fit to Rabi curve:
         coefficients = {'a','f0', 'g', 'c'};
-        startPoint = [cont,      center,       g,        baseLine];
-        lower =      [0.5*cont,  center-4*g, 0.1*g,  0.7*baseLine];
-        upper =      [1.5*cont,  center+4*g, 5  *g,  1.3*baseLine];
+        startPoint = [cont,      center,         g,      baseLine];
+        lower =      [lowerCont,  center-4*g, 1e-6,  0.7*baseLine];
+        upper =      [upperCont,  center+4*g, 5  *g,  1.3*baseLine];
         f = 'c - a * g^2 / ((x-f0)^2 + g^2)';
         myfittype = fittype(f, 'coefficients', coefficients);
         [fitObj, gof, ~] = fit(freq, signal, myfittype, 'Weights', 1./sterr.^2, 'StartPoint', startPoint, 'Lower', lower, 'Upper', upper);

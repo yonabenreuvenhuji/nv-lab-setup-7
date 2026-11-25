@@ -16,16 +16,16 @@ classdef (Abstract) Spcm < EventSender
         HAS_PHOTODIODE = 'hasPhotodiode';
         HAS_GATED_INTEGRATOR = 'hasGatedIntegrator';
         HAS_LASER_REF = 'hasLaserRef';
-        HAS_DIFF_INPUT = 'hasDiffInput';
+        HAS_DUAL_INPUT = 'hasDualInput';
         HAS_CAMERA = 'hasCamera';
         
     end
+    
     properties (Constant, Hidden)
         % This needs to be implemented, one way or another, in all SPCMs
         SPCM_NEEDED_FIELDS = {'classname'};
     end
     
-        
     methods (Access = protected)
         function obj = Spcm(spcmName)
             obj@EventSender(spcmName);
@@ -170,12 +170,12 @@ classdef (Abstract) Spcm < EventSender
             bool = isfield(obj.availableProperties,obj.HAS_GATED_INTEGRATOR);
         end
         
-        function bool = hasLaserRef(obj)
-            bool = isfield(obj.availableProperties,obj.HAS_LASER_REF);
-        end
-        
-        function bool = hasDiffInput(obj)
-            bool = isfield(obj.availableProperties,obj.HAS_DIFF_INPUT);
+        function bool = hasDualInput(obj)
+            if isfield(obj.availableProperties, obj.HAS_DUAL_INPUT)
+                bool = obj.availableProperties.(obj.HAS_DUAL_INPUT);
+            else
+                bool = 0;
+            end
         end
         
         function bool = hasCamera(obj)

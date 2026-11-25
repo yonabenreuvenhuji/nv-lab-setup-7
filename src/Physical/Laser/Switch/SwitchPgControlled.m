@@ -3,7 +3,7 @@ classdef SwitchPgControlled < EventSender & EventListener
     %   A PG is either a pulse blaster or a pulse streamer, and they both
     %   have the same interface.
     
-    % Maybe hould be subclass of class "Switch"
+    % Maybe should be subclass of class "Switch"
     
     properties
         isEnabled   % logical

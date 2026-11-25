@@ -20,9 +20,6 @@ classdef ExpCalibrateDelays < Experiment
         channelDelay                % in us - The delay between turning channels on and off. The first channel will be turned on after this time.
                                     % It is possible to indicate the on/off times of each channel, and then it should be a vector of length = 2 * length(listOfChannels).
         detectionStartStopOffset    % in us - How long before and after the seqeunce should the detection start and stop.
-        AWGchannel
-        waveform
-        % frequencyInternal
     end
     
     properties (Hidden, Dependent = true)
@@ -42,33 +39,33 @@ classdef ExpCalibrateDelays < Experiment
             obj.parameterName = 'shifts';
             
             % First, get a frequency generator
-            if exist('MWChannel', 'var')
-                sg = getObjByName(SignalGenerator.NAME);
-                if ~iscell(MWChannel)
-                    MWChannel = {MWChannel};
-                end
-                
-                % validate the MWChannel exists
-                for i = 1:length(MWChannel)
-                    if ischar(MWChannel{i})
-                        tf = cellfun(@(s) strcmp(s.pgChannelName, MWChannel{i}), sg.FGchannels);
-                    else
-                        tf = cellfun(@(s) s.pgChannelNumber == MWChannel{i}, sg.FGchannels);
-                    end
-                    if tf == 0
-                        error('No frequency generator found');
-                    end
-                end
-                obj.MWChannel = MWChannel;
+            if exist('FG', 'var')
+                obj.givenFG = FG;
+            else
+                FG = [];
             end
-
+%             obj.freqGenName = obj.getFgName(FG);
+%             
+            %%% To use MW2 comment the aboove block and unomment the block
+            %%% below. make sure to pass the amplitude and frequency as a
+            %%% 2d vector, e.g. frequency=[2870,2870], amplitude=[-10,-10]
+           if ~exist('FGs', 'var')
+                fgCell = FrequencyGenerator.getFG();
+                if fgCell{1}.numChannels == 2 || length(fgCell) == 1
+                    obj.freqGenName = fgCell{1}.name;
+                else
+                    obj.freqGenName = cellfun(@(fg)fg.name, fgCell(1:end), 'UniformOutput' ,0);
+                end
+            else
+                obj.freqGenName = obj.getFgName(FGs);
+            end
             % Set properties inherited from Experiment
             obj.frequency = 3029;           % in MHz
             obj.amplitude = -10;            % in dBm
             
             obj.repeats = 50000;
             obj.averages = 100;
-            obj.isTracking = true;          % Initialize tracking
+            obj.isTracking = false;          % Initialize tracking
             obj.trackThreshhold = 0.7;
             obj.shouldAutosave = true;
             obj.fixDelays = 0;              % Do not fix delays for this experiment!
@@ -174,25 +171,6 @@ classdef ExpCalibrateDelays < Experiment
         function totalParamNum = getTotalNumberOfParams(obj)
             totalParamNum = length(obj.detectionTimeShift);
         end
-
-        function genWave(obj) % function generateWaveform(obj)
-            sg = getObjByName(SignalGenerator.NAME);
-            awg = sg.AWGchannels{sg.AWGchannelMap(obj.AWGchannel)}.device;
-            S1 = Sequence;
-            S1.addEvent(obj.channelDelay, obj.MWChannel);
-            % S1.addEvent(0.02, obj.MWChannel);
-            S1.name = 'DelayCalibration_1';
-            if iscell(obj.frequency)
-                % obj.frequency = cell(obj.frequency);
-                obj.frequency = obj.frequency{1};
-            end
-            obj.frequencyInternal = obj.frequency; % saving the value so we can change it back at the end of the experiment
-            obj.frequency = {obj.frequency};
-            waveform = {Waveform(obj, S1, obj.MWChannel{1}, awg, 1, obj.baseband)};
-            awg.loadAWGInternal(awg, waveform);
-            obj.frequency = obj.frequencyInternal;
-            obj.waveform = waveform;
-        end
     end
     
     %% Overridden from Experiment
@@ -228,12 +206,9 @@ classdef ExpCalibrateDelays < Experiment
                         duration = times(end+1-k) - times(k);
                     end
                     % S.addEventAtGivenTime(startTime, duration, obj.listOfChannels{k});
-                    if ~isempty(obj.AWGchannel) && any(contains(obj.listOfChannels{k}, obj.AWGchannel{1}))
-                        if isempty(obj.waveform)
-                            obj.genWave();
-                        end
+                    if any(contains(obj.listOfChannels{k}, 'TRIGGER'))
                         S.addEventAtGivenTime(startTime, 5e-3, obj.listOfChannels{k});
-                        % S.addEventAtGivenTime(startTime+duration-10e-3, 5e-3, obj.listOfChannels{k});
+                        S.addEventAtGivenTime(startTime+duration-10e-3, 5e-3, obj.listOfChannels{k});
                     else
                         S.addEventAtGivenTime(startTime, duration, obj.listOfChannels{k});
                     end
@@ -345,15 +320,6 @@ classdef ExpCalibrateDelays < Experiment
             % counterpart for obj.prepare.
             % In the future, it will also analyze results and fit from it
             % the coherence time.
-
-            if ~isempty(obj.AWGchannel)
-                obj.frequency = obj.frequencyInternal;
-                obj.waveform = [];
-
-                sg = getObjByName(SignalGenerator.NAME);
-                awg = sg.AWGchannels{sg.AWGchannelMap(obj.AWGchannel)}.device;
-                awg.disconnectIQ(awg);
-            end
             
             obj.wrapUpInternal()
         end

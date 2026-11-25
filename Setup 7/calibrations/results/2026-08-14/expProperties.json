@@ -1,0 +1,31 @@
+{
+	"isTracking": 0,
+	"nChannels": 2,
+	"MWChannel": [
+		"MW",
+		"MW2"
+	],
+	"GIMeas": 0,
+	"AWGorSRSswitch": 0,
+	"frequency": 2821.81,
+	"channelPhase": [
+		0,
+		18.91
+	],
+	"timeDelay": 0,
+	"amplitude": -10,
+	"amplitudeDiff": [
+		0,
+		-0.927
+	],
+	"signalRatio": -16.2,
+	"rabiFreq1": 6,
+	"halfPiTime": 0.035,
+	"piTime": 0.066,
+	"threeHalvesPiTime": 0.097,
+	"laserInitializationDuration": 26.5,
+	"checkGlitchInData": true,
+	"lastDelay": 0.55,
+	"referenceDetectionDuration": 3.88,
+	"detectionDuration": 3.88
+}

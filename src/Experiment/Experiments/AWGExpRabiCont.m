@@ -107,6 +107,35 @@ classdef AWGExpRabiCont < ExperimentAWG
                 S.addEvent(initDuration,                'greenLaser');                                  % Initialization
             end
 
+            % ---------------------------------------------------------------------
+            % TURN THE MW OUTPUTS BACK ON, on every run.
+            %
+            % This is the counterpart of a real bug fixed in
+            % FrequencyGeneratorTektronixAWG. The stop command used to be
+            % 'AWGCONTROL:STOP:IMMEDIATE; OUTP1 OFF' -- a bare ';' leaves the Tektronix
+            % parser inside the AWGControl subtree, so 'OUTP1 OFF' was parsed as
+            % 'AWGCONTROL:OUTP1 OFF' and rejected with error -113. Nothing reads the error
+            % queue, so the failure was invisible: the outputs never actually went off at
+            % the end of a run, and every experiment silently relied on that.
+            %
+            % The separator is now ';:' and the outputs really do go off. So something has
+            % to switch them back on, and prepareInternal does NOT: its fg.output = true
+            % branch is skipped for a TektronixAWG by
+            %   (~contains(name,'TektronixAWG') + ~contains(name,'synthhd...') == 2)
+            % which is 0 + 1 = 1, never 2.
+            %
+            % LoadAWG below does set workChannels -- but it only runs when
+            % (changeFlag || restartFlag) && ~dontLoadAWG. So a restart, a rerun with
+            % nothing changed, or dontLoadAWG = 1 emits NO MICROWAVES AT ALL, and every
+            % point comes back at ratio ~= 1. That is a data-integrity failure that looks
+            % like a physics result.
+            %
+            % activeChannels, not 1:nChannels: with nChannels = 1 and MWChannel = 'MW2',
+            % activeChannels is 2 and 1:nChannels would enable the wrong output.
+            %
+            % Two SCPI commands, idempotent, safe to send every run.
+            obj.AWG.workChannels = obj.activeChannels;
+
             obj.prepareInternal(S)
             if (obj.changeFlag || obj.restartFlag) && (~obj.dontLoadAWG)
                 obj.LoadAWG;

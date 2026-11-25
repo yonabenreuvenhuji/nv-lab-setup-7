@@ -94,6 +94,7 @@ classdef StageScanner < EventSender & EventListener & Savable
             if isempty(spcm); throwBaseObjException(Spcm.NAME); end
             spcm.setSPCMEnable(true);
             
+            
             try
                 stage.sanityCheckForScanRange(obj.mStageScanParams);
             catch err
@@ -299,8 +300,10 @@ classdef StageScanner < EventSender & EventListener & Savable
                 scanOk = false;
                 
                 % Prepare Scan
+                
                 prepareScanfuncName = sprintf('PrepareScan%s', upper(axisToScan));
                 feval(prepareScanfuncName, stage, x, y, z, nFlat, nOverRun, tPixel);
+                
                 
                 % try to scan
                 kcps = zeros(curPixelsAmountToScan , size(kcpsScanVector, 2));
@@ -315,9 +318,12 @@ classdef StageScanner < EventSender & EventListener & Savable
                                 spcm.clearScanRead();  % todo - added to try resolving the problem. Wasn't here in the first place!
                                 return
                             end
-                            
-                            spcm.prepareCountByStage(stage.name, curPixelsAmountToScan, timeout, isFastScan);
-                            
+
+                            if isa(spcm, "CameraControlled") || isa(spcm, "PhotoDiodeDigitizerNiDaqControlled")
+                                spcm.prepareCountByStage(stage.name, curPixelsAmountToScan, timeout, isFastScan, tPixel);
+                            else
+                                spcm.prepareCountByStage(stage.name, curPixelsAmountToScan, timeout, isFastScan);
+                            end
                             spcm.startScanCount();
                             
                             % scan stage

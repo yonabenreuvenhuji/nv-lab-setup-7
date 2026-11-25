@@ -73,7 +73,7 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
                 obj.ps.startNow;
             end
             
-            seqTime = obj.sequence.duration * obj.repeats;
+            seqTime = obj.sequence.duration * obj.repeats * 1e-6;
             tic
             TF = hasFinished(obj);
             % tic_vec = []
@@ -82,7 +82,7 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
                 % start_time = tic
                 TF = hasFinished(obj);
                 % tic_vec = [tic_vec, toc(start_time)];
-                if toc > 5*seqTime
+                if toc > 20*seqTime
                     error('pulse streamer time out')
                 end 
             end

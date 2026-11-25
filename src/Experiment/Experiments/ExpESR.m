@@ -15,7 +15,7 @@ classdef ExpESR < Experiment
         frequency           % double. in MHz
         mirrorSweepAround   % double. in MHz
         amplitude           % double. in dBm
-        % frequencyInternal   % double. in MHz, this is the vector to store all frequencies during the experiment run.
+        phase               % double. in degrees
         
         mode                % string. Either 'CW' or 'pulsed'
                             % ('pulsed is to be implemented in the future, if needed)
@@ -34,44 +34,30 @@ classdef ExpESR < Experiment
     
     methods
         
-        function obj = ExpESR(MWChannel, passedExpName)
+        function obj = ExpESR(FGs, MWChannel, passedExpName)
             
-            if nargin == 2
+            if nargin == 3
                expName = passedExpName;
             else
                expName = ExpESR.NAME;
             end
             
             obj@Experiment(expName);
-            obj.parameterName = 'frequencies';
-
-            % First, get a frequency generator
-            if exist('MWChannel', 'var') && ~isempty(MWChannel)
-                sg = getObjByName(SignalGenerator.NAME);
-                if ~iscell(MWChannel)
-                    MWChannel = {MWChannel};
-                end
-
-                % validate the MWChannel exists
-                for i = 1:length(MWChannel)
-                    if ischar(MWChannel{i})
-                        tf = cellfun(@(s) strcmp(s.pgChannelName, MWChannel{i}), sg.FGchannels);
-                    else
-                        tf = cellfun(@(s) s.pgChannelNumber == MWChannel{i}, sg.FGchannels);
-                    end
-                    if tf == 0
-                        error('No frequency generator found');
-                    end
-                end
+            if exist('MWChannel', 'var')
                 obj.MWChannel = MWChannel;
             end
+            if exist('FGs', 'var')
+                obj.givenFG = FGs;
+                obj.freqGenName = obj.getFgName(FGs);
+            end
             
-
+            obj.parameterName = 'frequencies';
+                        
             obj.repeats = 100;
             obj.averages = 1000;
             
             obj.frequency = obj.ZERO_FIELD_SPLITTING + (-100 : 2 : 100);     %in MHz
-            obj.amplitude = -25;        % dBm
+            obj.amplitude = -35;        % dBm
             obj.phase = 0;
             obj.mode = 'CW';            % Can only be 'CW' for now.
             obj.nChannels = 1;          % two channels can be added....
@@ -115,12 +101,12 @@ classdef ExpESR < Experiment
             obj.changeFlag = true;
         end
 
-        % function set.phase(obj, newVal) % newVal is in degrees
-        %     checkPhase(obj, newVal)
-        %     % If we got here, then newVal is OK.
-        %     obj.phase = newVal;
-        %     obj.changeFlag = true;
-        % end
+        function set.phase(obj, newVal) % newVal is in degrees
+            checkPhase(obj, newVal)
+            % If we got here, then newVal is OK.
+            obj.phase = newVal;
+            obj.changeFlag = true;
+        end
 
         function set.nChannels(obj, newVal)
             checkNumberOfChannels(obj, newVal)
@@ -175,45 +161,12 @@ end
     
     methods
         function totalParamNum = getTotalNumberOfParams(obj)
-            % if iscell(obj.frequency)
-            %     totalParamNum = length(obj.frequency{1});
-            % else
-            %     totalParamNum = length(obj.frequency);
-            % end
-            totalParamNum = length(obj.frequencyInternal);
+            totalParamNum = length(obj.frequency);
         end
     end
     
     %% Helper functions
     methods
-        function changeSequence(obj, idx)
-            % Devices
-            pg = getObjByName(PulseGenerator.NAME);
-            % Some magic numbers
-            % obj.frequency = {obj.frequencyInternal(idx)};
-
-            % change sequence in the pulse generator
-            if ~isempty(obj.sequencesList)
-                pg.setSequence(obj.sequencesList{idx});
-            else
-                if obj.nChannels == 1
-                    obj.frequency = {obj.frequencyInternal(idx)};
-                else % This will run both channels at the same time
-                    if obj.equalChannels
-                        obj.frequency = {obj.frequencyInternal(idx), obj.frequencyInternal(idx)};
-                        obj.phase = {0, obj.calculatePhase(obj.frequencyInternal(idx))};
-                    else
-                        obj.frequency = {obj.frequencyInternal(idx), obj.freqMirrored(idx)};
-                    end
-                end
-                obj.setFGparams('frequency', 'phase')
-            end
-
-            % change sequence in the signal generator
-            % might need to add another pulse for the trigger channel
-
-        end
-
         function f = mirrorFrequency(obj)
             if isempty(obj.mirrorSweepAround)
                 f = [];
@@ -221,7 +174,7 @@ end
                 % newFrequencies = |mirrorFreq - (oldFrequencies - mirrorFreq)|
                 %                = |2 * mirrorFreq - oldFrequencies|
                 % or, in proper code:
-                f = abs(2*obj.mirrorSweepAround - obj.frequencyInternal);
+                f = abs(2*obj.mirrorSweepAround - obj.frequency);
                 if min(f) < obj.mirrorSweepAround && max(f) > obj.mirrorSweepAround
                     f = flip(f);
                 end
@@ -240,10 +193,6 @@ end
             
             % Sequence
             %%% Useful parameters for what follows
-            if ~iscell(obj.frequency)
-                obj.frequencyInternal = obj.frequency; % store the user input frequency internally
-                obj.frequency = obj.frequency(1); % pass to the experiment preperation only the first frequency.
-            end
             isSingleMeasurement = (isempty(obj.mirrorSweepAround) || obj.nChannels > 1);
             obj.detectionPeriodsPerRepeat = 2;
             obj.runsPerPerform = (1 + ~isSingleMeasurement);
@@ -259,7 +208,7 @@ end
                     end
                     switch obj.nChannels
                         case 1
-                            P = Pulse(obj.detectionDuration,        {MWChannel{1}, 'greenLaser', 'detector'});
+                            P = Pulse(obj.detectionDuration,        {MWChannel, 'greenLaser', 'detector'});
                         case 2
                             P = Pulse(obj.detectionDuration,        {MWChannel, 'MW2', 'greenLaser', 'detector'});
                         otherwise
@@ -267,7 +216,7 @@ end
                     end
                     
 %                     S.addEvent(1000,                       '');
-                    S.addEvent(obj.laserInitializationDuration,     {MWChannel{1}, 'greenLaser'});
+                    S.addEvent(obj.laserInitializationDuration,     {MWChannel, 'greenLaser'});
                     S.addPulse(P);
                     S.addEvent(obj.laserInitializationDuration,     {'greenLaser'});
                     S.addEvent(obj.referenceDetectionDuration,      {'greenLaser','detector'});
@@ -296,28 +245,27 @@ end
             end
             
             % Initialize FrequencyGenerator
-            % if isempty(obj.givenFG)
-            %     fgCell = FrequencyGenerator.getFG();
-            %     if obj.nChannels == 1
-            %         obj.freqGenName = fgCell{1}.name;
-            %     else
-            %         if fgCell{1}.numChannels == 2
-            %             obj.freqGenName = fgCell{1}.name;
-            %         else
-            %             obj.freqGenName = cellfun(@(fg)fg.name, fgCell(1:end), 'UniformOutput' ,0);
-            %         end
-            %     end
-            % end
-
+            if isempty(obj.givenFG)
+                fgCell = FrequencyGenerator.getFG();
+                if obj.nChannels == 1
+                    obj.freqGenName = fgCell{1}.name;
+                else
+                    if fgCell{1}.numChannels == 2
+                        obj.freqGenName = fgCell{1}.name;
+                    else
+                        obj.freqGenName = cellfun(@(fg)fg.name, fgCell(1:end), 'UniformOutput' ,0);
+                    end
+                end
+            end
             obj.prepareInternal(S)
             
             % Set parameter, for saving
-            obj.mCurrentXAxisParam.value = obj.frequencyInternal;
+            obj.mCurrentXAxisParam.value = obj.frequency;
         end
         
         function perform(obj)
             % Initialization
-            len = length(obj.frequencyInternal);
+            len = length(obj.frequency);
             f1 = randperm(len);
             
             %%% Devices (+ Tracker)
@@ -325,9 +273,9 @@ end
             spcm = getObjByName(Spcm.NAME);
             tracker = getObjByName(Tracker.NAME);
             if isempty(tracker); throwBaseObjException(Tracker.Name); end
-            % if obj.nChannels == 1
-            %     fg = getObjByName(obj.freqGenName);
-            % end
+            if obj.nChannels == 1
+                fg = getObjByName(obj.freqGenName);
+            end
             
             % Some magic numbers
             isSingleMeasurement = (isempty(obj.mirrorSweepAround) || obj.nChannels > 1);
@@ -350,30 +298,32 @@ end
                     end
                     try
                         i = f1(k);
-                        obj.changeSequence(i)
-                        % if obj.nChannels == 1
-                        %     fg.frequency = obj.frequency(i);
-                        % else % This will run both channels at the same time
-                        %     if obj.equalChannels
-                        %         obj.setMultipleFGFrequencies([obj.frequency(i), obj.frequency(i)]);
-                        %         fg.phase = [0, obj.calculatePhase(obj.frequency(i))];
-                        %     else
-                        %         obj.setMultipleFGFrequencies([obj.frequency(i), obj.freqMirrored(i)]);
-                        %     end
-                        % end
+                        if obj.nChannels == 1
+                            fg.frequency = obj.frequency(i);
+                        else % This will run both channels at the same time
+                            if obj.equalChannels
+                                obj.setMultipleFGFrequencies([obj.frequency(i), obj.frequency(i)]);
+                                fg.phase = [0, obj.calculatePhase(obj.frequency(i))];
+                            else
+                                obj.setMultipleFGFrequencies([obj.frequency(i), obj.freqMirrored(i)]);
+                            end
+                        end
+
                         data = obj.getRawData(pg, spcm);
                         if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled')
-                            [sig(1:2), sterr(1:2)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(1+~isSingleMeasurement)*(k-1)+1:end));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
+                             [sig(1:2), sterr(1:2)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(1+~isSingleMeasurement)*(k-1)+1:end));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
+                        elseif isa(spcm, 'SpcmTimeTaggerControlledArduinoDaqEnabled')
+                             [sig(1:2), sterr(1:2)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(1+~isSingleMeasurement)*(k-1)+1:end));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
                         else
                             [sig(1:2), sterr(1:2)] = obj.processData(data);
                         end
                         
                         if ~isSingleMeasurement % run another sweep with the same source
-                            % fg.frequency = obj.freqMirrored(i);
-                            obj.frequency = {obj.freqMirrored(i)};
-                            obj.setFGparams('frequency');
+                            fg.frequency = obj.freqMirrored(i);
                             data = obj.getRawData(pg, spcm);
                             if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled')
+                                [sig(3:4), sterr(3:4)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*2*(k-0.5)+1:end));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
+                            elseif isa(spcm, 'SpcmTimeTaggerControlledArduinoDaqEnabled')
                                 [sig(3:4), sterr(3:4)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*2*(k-0.5)+1:end));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
                             else
                                 [sig(3:4), sterr(3:4)] = obj.processData(data);

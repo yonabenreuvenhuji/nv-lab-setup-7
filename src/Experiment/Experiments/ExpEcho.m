@@ -37,31 +37,32 @@ classdef ExpEcho < Experiment
     
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     methods
-        function obj = ExpEcho(MWChannel)
+        function obj = ExpEcho(FG, MWChannel)
             obj@Experiment(ExpEcho.NAME);
             obj.parameterName = 'taus';
             
             % First, get a frequency generator
             if exist('MWChannel', 'var')
-                sg = getObjByName(SignalGenerator.NAME);
-                if ~iscell(MWChannel)
-                    MWChannel = {MWChannel};
-                end
-                
-                % validate the MWChannel exists
-                for i = 1:length(MWChannel)
-                    if ischar(MWChannel{i})
-                        tf = cellfun(@(s) strcmp(s.pgChannelName, MWChannel{i}), sg.FGchannels);
-                    else
-                        tf = cellfun(@(s) s.pgChannelNumber == MWChannel{i}, sg.FGchannels);
-                    end
-                    if tf == 0
-                        error('No frequency generator found');
-                    end
-                end
                 obj.MWChannel = MWChannel;
             end
-
+            if exist('FG', 'var')
+                obj.givenFG = FG;
+            else
+                FG = [];
+            end
+            obj.freqGenName = obj.getFgName(FG);
+            
+            if ~exist('FGs', 'var')
+                fgCell = FrequencyGenerator.getFG();
+                if fgCell{1}.numChannels == 2 || length(fgCell) == 1
+                    obj.freqGenName = fgCell{1}.name;
+                else
+                    obj.freqGenName = cellfun(@(fg)fg.name, fgCell(1:end), 'UniformOutput' ,0);
+                end
+            else
+                obj.freqGenName = obj.getFgName(FGs);
+            end
+            
             % Set properties inherited from Experiment
             obj.repeats = 5000;
             obj.averages = 1000;
@@ -114,7 +115,7 @@ classdef ExpEcho < Experiment
         end
         
         function set.amplitude(obj, newVal) % newVal is in dBm
-            checkFrequencyVector(obj, newVal)
+            checkAmplitude(obj, newVal)
             % If we got here, then newVal is OK.
             obj.amplitude = newVal;
             obj.changeFlag = true;
@@ -171,32 +172,8 @@ classdef ExpEcho < Experiment
     end
     
     methods
-        function [totalParamNum, paramList] = getTotalNumberOfParams(obj)
+        function totalParamNum = getTotalNumberOfParams(obj)
             totalParamNum = length(obj.tau);
-            paramList = obj.tau;
-        end
-
-        function changeSequence(obj, idx)
-            % Devices
-            pg = getObjByName(PulseGenerator.NAME);
-            sg = getObjByName(SignalGenerator.NAME);
-            % Some magic numbers
-            maxLastDelay = Experiment.DEFAULT_LAST_DELAY + 2 * max(obj.tau);
-
-            % change sequence in the pulse generator
-            if ~isempty(obj.sequencesList)
-                sg.setSequence(idx, obj.MWChannel);
-                pg.setSequence(obj.sequencesList{idx});
-            else
-                pg.changeSequence('tau', 'duration', obj.tau(idx));
-                if obj.constantTime
-                    pg.changeSequence('lastDelay', 'duration', maxLastDelay - 2*obj.tau(idx));
-                end
-            end
-
-            % change sequence in the signal generator
-            % might need to add another pulse for the trigger channel
-
         end
     end
     
@@ -232,8 +209,6 @@ classdef ExpEcho < Experiment
                 else % Half Pi for double measurement (For Readout)
                     if obj.useIQ % With IQ
                         S.addEvent(obj.halfPiTime,          {'I', 'Q', MWChannel});             % MW in -x
-                    elseif obj.useAWG % still halfPiTime, this time we need to define the phase
-                        S.addEvent(obj.halfPiTime,                  MWChannel);                 % MW in -x
                     else  % Half Pi Pulse Without IQ
                         S.addEvent(obj.threeHalvesPiTime,   MWChannel);                         % MW in -x
                     end
@@ -267,7 +242,7 @@ classdef ExpEcho < Experiment
                 if isempty(tracker); throwBaseObjException(Tracker.Name); end
             
             % Some magic numbers
-            % maxLastDelay = Experiment.DEFAULT_LAST_DELAY + 2 * max(obj.tau);
+            maxLastDelay = Experiment.DEFAULT_LAST_DELAY + 2 * max(obj.tau);
             
             k = 0;      % added by Ty 29.07.21
             f1 = [];    % added by Ty 29.07.21
@@ -288,11 +263,10 @@ classdef ExpEcho < Experiment
                         return;
                     end
                     try
-                        obj.changeSequence(t)
-                        % pg.changeSequence('tau', 'duration', obj.tau(t));
-                        % if obj.constantTime
-                        %     pg.changeSequence('lastDelay', 'duration', maxLastDelay - 2*obj.tau(t));
-                        % end
+                        pg.changeSequence('tau', 'duration', obj.tau(t));
+                        if obj.constantTime
+                            pg.changeSequence('lastDelay', 'duration', maxLastDelay - 2*obj.tau(t));
+                        end
                         
                         data = obj.getRawData(pg, spcm);
                         
