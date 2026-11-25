@@ -4,7 +4,11 @@ classdef PathHelper
     
     properties
     end
-    
+
+    properties (Constant)
+        DEFAULT_SAVES_FOLDER = 'C:\lab\Saves\'  % Root for saved data when setupInfo.json has no "savesFolder"
+    end
+
     methods (Static)
         function nvLabFolderPath = getPathToNvLab()
             googleDriveFolder = sprintf('%s\\Google Drive\\', getenv('USERPROFILE'));
@@ -31,7 +35,37 @@ classdef PathHelper
                 modeString = 'prod';
             end
         end
-        
+
+        function srcPath = getPathToSrc()
+            % The code folder (src\), derived from this file's own location
+            % (src\Helper\PathHelper.m), so it follows the repository
+            % wherever it is cloned - no Google Drive needed.
+            % Ends with a backslash.
+            helperFolder = fileparts(mfilename('fullpath'));
+            srcPath = PathHelper.appendBackslashIfNeeded(fileparts(helperFolder));
+        end
+
+        function repoPath = getPathToRepo()
+            % Root of the repository: the folder holding src\ and the
+            % (git-ignored) drivers\ folder. Ends with a backslash.
+            srcPath = PathHelper.getPathToSrc();
+            repoPath = PathHelper.appendBackslashIfNeeded(fileparts(srcPath(1:end-1)));
+        end
+
+        function savesPath = getPathToSaves()
+            % Root folder for saved data; saves go to
+            % <root>\Setup N\_AutoSave\ and <root>\Setup N\_Manual\.
+            % Taken from "savesFolder" in setupInfo.json if it is there,
+            % otherwise DEFAULT_SAVES_FOLDER (C:\lab\Saves\).
+            % Ends with a backslash.
+            savesPath = PathHelper.DEFAULT_SAVES_FOLDER;
+            jsonStruct = JsonInfoReader.getJson();
+            if isfield(jsonStruct, 'savesFolder') && ~isempty(jsonStruct.savesFolder)
+                savesPath = jsonStruct.savesFolder;
+            end
+            savesPath = PathHelper.appendBackslashIfNeeded(savesPath);
+        end
+
         function folderString = recuresiveFindFolder(startingPositionPath, folderNameToSearchString)
             % Recursively finds and returns the full path of a folder
             % within another (== starting position)

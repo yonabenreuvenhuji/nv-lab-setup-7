@@ -185,8 +185,20 @@ classdef ClassStanda8SMC4_stages < ClassStage
         function Connect(obj)
             %load librery if neded
             if ~libisloaded('libximc')
-                addpath(fullfile([PathHelper.getPathToNvLab, '/Control code/Drivers/ximc/ximc-2.10.5/ximc/win64/wrappers/matlab/']));
-                addpath(fullfile([PathHelper.getPathToNvLab, '/Control code/Drivers/ximc/ximc-2.10.5/ximc/win64/']));
+                % libximc comes from the repo's drivers folder (git-ignored, so
+                % it has to be copied into each clone by hand):
+                %   <repo>\drivers\ximc-2.10.5\ximc\win64\                  libximc.dll + its dlls
+                %   <repo>\drivers\ximc-2.10.5\ximc\win64\wrappers\matlab\  ximcm.m prototype + thunk
+                ximcWin64 = fullfile(PathHelper.getPathToRepo(), 'drivers', 'ximc-2.10.5', 'ximc', 'win64');
+                ximcMatlab = fullfile(ximcWin64, 'wrappers', 'matlab');
+                if ~isfile(fullfile(ximcWin64, 'libximc.dll')) || ~isfile(fullfile(ximcMatlab, 'ximcm.m'))
+                    error(['Standa stages: libximc driver not found. Expected\n' ...
+                           '    libximc.dll in %s\n    ximcm.m     in %s\n' ...
+                           'Copy the ximc-2.10.5 folder into <repo>\\drivers\\ (it is git-ignored).'], ...
+                          ximcWin64, ximcMatlab);
+                end
+                addpath(ximcMatlab);
+                addpath(ximcWin64);
                 loadlibrary('libximc.dll',@ximcm);
                 disp('libximc is now loaded')
             else

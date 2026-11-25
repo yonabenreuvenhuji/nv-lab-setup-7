@@ -124,8 +124,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
     end
     
     properties (Constant)
-        PATH_ALL_EXPERIMENTS = sprintf('%sControl code\\%s\\Experiment\\Experiments\\', ...
-            PathHelper.getPathToNvLab(), PathHelper.SetupMode);
+        PATH_ALL_EXPERIMENTS = [PathHelper.getPathToSrc(), 'Experiment\Experiments\']; % in this repo, not on Google Drive
         PATH_CALIBRATIONS = [Experiment.PATH_ALL_EXPERIMENTS, 'Calibrations\']
         
         EVENT_DATA_UPDATED = 'dataUpdated'                  % when something changed regarding the plot (new data, change in x\y axis, change in x\y labels)
