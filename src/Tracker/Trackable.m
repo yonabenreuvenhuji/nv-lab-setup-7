@@ -19,8 +19,7 @@ classdef (Abstract) Trackable < Experiment
     end
     
     properties (Constant)
-        PATH_ALL_TRACKABLES = sprintf('%sControl code\\%s\\Tracker\\Trackables\\', ...
-            PathHelper.getPathToNvLab(), PathHelper.SetupMode);
+        PATH_ALL_TRACKABLES = [PathHelper.getPathToSrc(), 'Tracker\Trackables\']; % in this repo, not on Google Drive
         
         EVENT_TRACKABLE_EXP_ENDED = 'TrackableExperimentFinished'
         EVENT_TRACKABLE_EXP_UPDATED = 'TrackableExperimentUpdated'

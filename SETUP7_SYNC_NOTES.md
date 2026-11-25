@@ -63,33 +63,59 @@ the 48 `.svg` calibration plots, ~52 MB, largest 5.2 MB).
   3 levels deep).
 - 573 files at the same path are byte-identical to the Drive (line endings ignored).
 - Nothing outside `ExpExtendedCoherentControl.m` references the removed SignalGenerator API.
-- **Not tested in MATLAB:** this PC isn't the lab PC.
+- Confirmed working on the lab PC (2026-11-25).
+
+### No Google Drive at runtime
+
+Setup 7 no longer reads anything from the Drive while running:
+
+| What | Before | Now |
+|---|---|---|
+| Standa `libximc` driver (`ClassStanda8SMC4_stages.Connect`) | `<NV Lab>\Control code\Drivers\ximc\ximc-2.10.5\...` | `<repo>\drivers\ximc-2.10.5\ximc\win64\` (+ `wrappers\matlab\`). Clear error naming both folders if missing. |
+| Autosave / manual save / backup / experiment log (`SaveLoad`) | `<NV Lab>\Control code\Saves\Setup 7\_AutoSave`, `\_Manual` | `C:\lab\Saves\Setup 7\_AutoSave\`, `\_Manual\`, created on startup (`SaveLoad.init`). Override with `"savesFolder"` in setupInfo.json. |
+| GUI experiment list (`Experiment.PATH_ALL_EXPERIMENTS`, `PATH_CALIBRATIONS`) | scanned `<NV Lab>\Control code\prod\Experiment\Experiments\` on the Drive | the repo's `src\Experiment\Experiments\` |
+| Trackables (`Trackable.PATH_ALL_TRACKABLES`) | the Drive's `prod\Tracker\Trackables\` | the repo's `src\Tracker\Trackables\` |
+
+These all go through new `PathHelper` helpers: `getPathToSrc()` and `getPathToRepo()` derive the
+folders from `PathHelper.m`'s own location, and `getPathToSaves()` reads `"savesFolder"` or falls
+back to `C:\lab\Saves\`. `PathHelper.getPathToNvLab()` is kept for other setups' code, but nothing
+setup 7 runs calls it any more.
+
+Checked in MATLAB R2025b on the dev PC (no hardware):
+- no new `checkcode` warnings in any edited file;
+- the edited classes parse;
+- the experiment list resolves to the repo (93 experiments, 13 calibrations, 2 trackables);
+- save paths resolve to `C:\lab\Saves\Setup 7\...` by default and to `<savesFolder>\Setup 7\...`
+  with the override.
 
 ---
 
 ## 2. Lab-PC / config to-dos (not files in the repo)
 
-1. **`C:\lab\setupInfoLocation.json`** (read by `JsonInfoReader`) points to the hardware JSON,
-   presumably the Drive's `Control code\Lab json\Setup 7\setupInfo.json`. It stays compatible
-   (same `frequencyGenerators` / `microwave` format). Decide whether it stays on the Drive or gets a
-   copy in the repo (e.g. `Setup 7/json/`), and repoint it. The README's "settings file is at
-   C:\lab\setupInfo.json" is inaccurate: it's a pointer file.
+1. **`C:\lab\setupInfoLocation.json`**: done. setupInfo.json has already been moved off the Drive.
+   (The README's "settings file is at C:\lab\setupInfo.json" is inaccurate: it's a pointer file.)
 2. **`C:\lab\setupParamsLocation.json`** is used by `Experiment.loadJsonParams` when no location is
-   passed. The run scripts and `expPropsWrite` use `setup7Paths().json`, which will now be the
-   repo's `Setup 7/calibrations/results/<newest>/expProperties.json`. Point this file at the same
-   place, or two calibrations will be live at once.
+   passed. The run scripts and `expPropsWrite` use `setup7Paths().json`, which is the repo's
+   `Setup 7/calibrations/results/<newest>/expProperties.json`. Make sure this file points at the
+   same place, or two calibrations will be live at once.
 3. **MATLAB path:** remove the Drive's `prod` and `NV Lab\Setup 7` folders from the saved path
    (`pathdef.m`), add the repo's `src`, then run `setup7AddPath` from the repo's
    `Setup 7\functions`. Run it with `struct('check', true)` first: it reports duplicate names.
-4. **Keep `G:\My Drive` mounted.** `ClassStanda8SMC4_stages` loads `libximc` from
-   `<NV Lab>\Control code\Drivers\ximc\ximc-2.10.5\...` via `PathHelper.getPathToNvLab`, and saves
-   still go to `NV Lab\Control code\Saves\Setup 7`. Alternatively, vendor the driver.
+4. **Driver and saves on each lab PC / clone:**
+   - `drivers\` is git-ignored, so copy `ximc-2.10.5` into `<repo>\drivers\` on every new clone.
+     The Standa class stops with a message naming the expected folders if it's missing.
+   - Saves now go to `C:\lab\Saves\Setup 7\`. To use another folder, add to setupInfo.json:
+     `"savesFolder": "D:\\NV data\\"` (JSON needs doubled backslashes).
+   - Older saves stay on the Drive in `Control code\Saves\Setup 7\`. Copy them across if you want
+     them in the Load dialog's default folder.
 5. **Results now live in two places.** From the switch-over, calibrations write into the repo's
    `Setup 7/calibrations/results/`. The existing `.svg` plots are included (up to ~5 MB each).
    Every calibration run adds more, so decide whether to keep committing them or `.gitignore` new
    ones.
-6. `AWGEXPDRDOIDS/scrippt_weak_meas.m` hardcodes
-   `G:\My Drive\NV Lab\Setup 7\calibrations\calibration results\`, a folder that no longer exists.
+6. `AWGEXPDRDOIDS/scrippt_weak_meas.m` (an old one-off script) hardcodes
+   `G:\My Drive\NV Lab\Setup 7\calibrations\calibration results\20250505 - with switches\expProperties_WEAK.json`.
+   That folder now exists only in the Drive's `old files` archive, so the script was already
+   broken. Left as is.
 
 ---
 

@@ -37,10 +37,12 @@ classdef SaveLoad < Savable & EventSender
         EVENT_STATUS_LOCAL_STRUCT = 'localStruct_status';
         EVENT_LOCAL_STRUCT = 'localStruct';
         
-        PATH_DEFAULT_SAVE = sprintf('%sControl code\\Saves\\Setup %s\\_Manual\\', ...
-            PathHelper.getPathToNvLab(), JsonInfoReader.setupNumber);
-        PATH_DEFAULT_AUTO_SAVE = sprintf('%sControl code\\Saves\\Setup %s\\_AutoSave\\', ...
-            PathHelper.getPathToNvLab(), JsonInfoReader.setupNumber);
+        % Saved data lives outside Google Drive: PathHelper.getPathToSaves() is
+        % "savesFolder" from setupInfo.json, or C:\lab\Saves\ by default.
+        PATH_DEFAULT_SAVE = sprintf('%sSetup %s\\_Manual\\', ...
+            PathHelper.getPathToSaves(), JsonInfoReader.setupNumber);
+        PATH_DEFAULT_AUTO_SAVE = sprintf('%sSetup %s\\_AutoSave\\', ...
+            PathHelper.getPathToSaves(), JsonInfoReader.setupNumber);
         PATH_SAVE_BACKUP = SaveLoad.PATH_DEFAULT_AUTO_SAVE;   % For now, keep it the same
         SAVE_FILE_SUFFIX = '.mat';
         
@@ -83,6 +85,12 @@ classdef SaveLoad < Savable & EventSender
             %    StageScanner to save the scans.
             % 2. One for category Experiments: Similarly, it needs to
             %    listen to class Experiment.
+            
+            % The default save folders are local (not on Google Drive), so
+            % create them on the first run on this computer.
+            for folder = {SaveLoad.PATH_DEFAULT_SAVE, SaveLoad.PATH_DEFAULT_AUTO_SAVE}
+                if ~isfolder(folder{1}); mkdir(folder{1}); end
+            end
             
             slImage = getObjByName(SaveLoadCatImage.NAME);
             if isempty(slImage) % i.e. no available object
