@@ -1,0 +1,182 @@
+{
+    "debugMode": false,
+    "showEvents": false,
+    "setupNumber": "7",
+    "niDaq": {
+        "dummy": false,
+        "deviceName": "dev1"
+    },
+    "pulseGenerator": {
+        "type": "pulseStreamer",
+        "dummy": false,
+        "channelNames": [
+            "greenLaser",
+            "dummy",
+            "trigger",
+            "MW",
+            "MW2",
+            "detector"
+        ],
+        "channelValues": [
+            0,
+            2,
+            4,
+            5,
+            6,
+            7
+        ],
+        "ipAddress": "132.64.56.113",
+        "trigger": "Software"
+    },
+    "spcm": {
+        "classname": "PhotoDiodeDigitizerNiDaq",
+        "nidaq_channel_gate": "port1/line1",
+        "digitizer_channel_names": [
+            "input_1",
+            "input_2",
+            "",
+            "laser_block"
+        ],
+        "digitizer_channel_values": [
+            1,
+            2,
+            3,
+            4
+        ],
+        "max_voltage": [
+            0.2,
+            0.2,
+            10,
+            10
+        ],
+        "input_impedance": [
+            50,
+            50,
+            1e6,
+            1e6
+        ],
+        "voltage_offset": [
+            0,
+            0,
+            0,
+            0
+        ],
+        "channel_delay": [
+            0,
+            0,
+            0,
+            0
+        ],
+        "defultd_input_configuration": "referenced",
+        "nidaq_channel_min_val": [
+            0
+        ],
+        "nidaq_channel_max_val": [
+            1
+        ],
+        "Switch": {
+            "detector": {
+                "classname": "pulseStreamer",
+                "switchChannel": 7,
+                "switchChannelName": "detector",
+                "onDelay": 0,
+                "offDelay": 0
+            }
+        }
+    },
+    "stages": [
+        {
+            "type": "Standa-85MC4",
+            "pg_controlled": true,
+            "address": {
+                "X": "COM6",
+                "Y": "COM3",
+                "Z": "COM8"
+            }
+        }
+    ],
+    "lasers": [
+        {
+            "nickname": "Green Laser",
+            "directControl": null,
+            "aomControl": {
+                "classname": "nidaq",
+                "channel": "ao0",
+                "minVal": -0.6,
+                "maxVal": 0
+            },
+            "switch": {
+                "classname": "pulseStreamer",
+                "switchChannel": 0,
+                "switchChannelName": "greenLaser",
+                "onDelay": 0.4525,
+                "offDelay": 0.4417
+            }
+        }
+    ],
+    "frequencyGenerators": [
+        {
+            "type": "TektronixAWG",
+            "address": "TCPIP::132.64.56.37::INSTR",
+            "serialNumber": "SN-NA",
+            "minFrequency": 0,
+            "maxFrequency": 4e3,
+            "minAmplitude": -70,
+            "maxAmplitude": 10,
+            "default": true,
+            "trigger1Channel": 4,
+            "trigger1ChannelName": "trigger",
+            "onDelay1": 1.4029,
+            "offDelay1": 0
+        }
+    ],
+    "microwave": {
+        "MW": {
+            "classname": "pulseBlaster",
+            "switchChannel": 5,
+            "switchChannelName": "MW",
+            "onDelay": 0.1738,
+            "offDelay": 0
+        },
+        "MW2": {
+            "classname": "pulseBlaster",
+            "switchChannel": 6,
+            "switchChannelName": "MW2",
+            "onDelay": 0.1791,
+            "offDelay": 0
+        }
+    },
+    "Helmholtz": {
+        "flip_direction": {
+            "available": false
+        },
+        "niDaqChannel": "PFI7",
+        "X": {
+            "type": "E3632A",
+            "name": "X",
+            "address": "COM7",
+            "channel": "P15V",
+            "max_current": 5.2,
+            "magnetic_field_ratio": 5.382,
+            "magnetic_field_offset": -0.373
+        },
+        "Y": {
+            "type": "E3632A",
+            "name": "Y",
+            "address": "COM9",
+            "range": "P15V",
+            "max_current": 5.2,
+            "magnetic_field_ratio": 8.034,
+            "magnetic_field_offset": 0.179
+        },
+        "Z": {
+            "type": "E3632A",
+            "name": "Z",
+            "address": "COM5",
+            "range": "P15V",
+            "max_current": 5.2,
+            "magnetic_field_ratio": 13.649,
+            "magnetic_field_offset": 2.121
+        }
+    }
+}

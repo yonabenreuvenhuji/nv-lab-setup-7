@@ -1,0 +1,12 @@
+{
+	"frequency":2766,
+	"timeDelay":2.5E-5,
+    "amplitudeDiff": [-2, 0],
+	"isTracking":0,
+	"nChannels":2,
+	"GIMeas":1,
+	"AWGorSRSswitch":0,
+	"lastDelay":1,
+	"detectionDuration":0.5,
+	"referenceDetectionDuration":0.5
+}
