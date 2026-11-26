@@ -68,7 +68,7 @@
 % -16 dBm per channel is the Rabi standard on this setup and calibMwPair's own default. Every
 % number in this level is measured here and is valid at no other level, so if you change it,
 % re-run 4.2 (stage 1 is enough -- see 4.7) AND 4.4. Neither one warns you.
-opAmplitude  = -20;
+opAmplitude  = -16;
 jsonLocation = setup7Paths().json;
 
 % A new random tau order before every average in the walk-mode Rabi runs (4.2, the coarse

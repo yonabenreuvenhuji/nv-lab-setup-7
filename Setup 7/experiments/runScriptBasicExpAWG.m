@@ -261,10 +261,12 @@ h.control('auto');
 
 a = AWGExpESR;
 a.loadJsonParams('all', jsonLocation);
-a.frequency          = 2800 : 0.5 : 2930;
+a.frequency          = 2750 : 2 : 3000;
 a.repeats            = 100;
 a.averages           = 3;
 a.amplitude          = -35;
+a.newOrderEveryAverage = true;
+
 a.detectionDuration  = esrWindow;           % from the window cell, same as the zero-field one
 a.referenceDetectionDuration = a.detectionDuration;
 a.laserInitializationDuration = esrInit;
