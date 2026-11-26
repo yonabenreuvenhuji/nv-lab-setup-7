@@ -10,7 +10,7 @@ classdef (Abstract) ViewTrackable <  ViewVBox & EventListener
         STRING_TIME = 'Time'
         STRING_STEPS = 'Steps'
         
-        LABEL_TIME = 'time [sec]'
+        LABEL_TIME = 'time (s)'
         LABEL_STEPS = 'steps'
     end
     

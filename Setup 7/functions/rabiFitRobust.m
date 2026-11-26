@@ -767,7 +767,7 @@ function showPlots(o)
 
     ylabel(axM, yLabelOf(o, S), 'Color', S.col.ink2);
     if ~o.opts.showResid
-        xlabel(axM, 'pulse duration \tau  [\mus]', 'Color', S.col.ink2);
+        xlabel(axM, 'pulse duration \tau  (\mus)', 'Color', S.col.ink2);
     end
     keepMask = true(1, numel(o.t)); keepMask(bad) = false;
     S.focus(axM, [yf(:); reshape(o.y(keepMask), [], 1)]);
@@ -779,7 +779,7 @@ function showPlots(o)
         axR = S.axes(subplot(4, 1, 4));
         S.zeroLine(axR, [min(o.t) max(o.t)]);
         S.resid(axR, o.t, o.resid ./ max(o.e, eps), S.col.s1);
-        xlabel(axR, 'pulse duration \tau  [\mus]', 'Color', S.col.ink2);
+        xlabel(axR, 'pulse duration \tau  (\mus)', 'Color', S.col.ink2);
         ylabel(axR, 'residual / \sigma', 'Color', S.col.ink2);
         S.tight(axR, o.t);
         S.title(axR, sprintf('\\chi^2_\\nu = %.2f, lag-1 autocorr %+.2f', ...
@@ -800,7 +800,7 @@ function showPlots(o)
             plot(ax2, [o.fAll(k) o.fAll(k)], ylim(ax2), '--', 'Color', S.col.flag, ...
                  'LineWidth', 1.2);
         end
-        xlabel(ax2, 'trial frequency  [MHz]', 'Color', S.col.ink2);
+        xlabel(ax2, 'trial frequency  (MHz)', 'Color', S.col.ink2);
         ylabel(ax2, 'weighted residual', 'Color', S.col.ink2);
         S.title(ax2, sprintf('dashed = fitted %s MHz', ...
                              strjoin(cellstr(num2str(o.fAll(:), '%.3f'))', ', ')));

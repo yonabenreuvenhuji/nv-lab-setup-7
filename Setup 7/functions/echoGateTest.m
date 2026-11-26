@@ -535,7 +535,7 @@ function drawGate(out)
     L{end+1} = sprintf('B walk, gate %.0f \\mus', out.B.gateUs);
     H(end+1) = S.data(axM, out.C.x, out.C.value, out.C.sterr, S.col.s2);
     L{end+1} = sprintf('C walk, gate %.0f \\mus', out.C.gateUs);
-    xlabel(axM, 'total evolution time  [\mus]', 'Color', S.col.ink2);
+    xlabel(axM, 'total evolution time  (\mus)', 'Color', S.col.ink2);
     ylabel(axM, S.yLabel, 'Color', S.col.ink2);
     S.tight(axM, out.ref.x); S.headroom(axM, 0.30); S.legend(axM, H, L);
     S.title(axM, gateTitle(out));
@@ -544,7 +544,7 @@ function drawGate(out)
     S.zeroLine(axR, [min(out.ref.x) max(out.ref.x)]);
     S.resid(axR, out.B.x, out.B.value - out.ref.value, S.col.s1);
     S.resid(axR, out.C.x, out.C.value - out.ref.value, S.col.s2);
-    xlabel(axR, 'total evolution time  [\mus]', 'Color', S.col.ink2);
+    xlabel(axR, 'total evolution time  (\mus)', 'Color', S.col.ink2);
     ylabel(axR, 'walk - classic', 'Color', S.col.ink2);
     S.tight(axR, out.ref.x);
 end

@@ -230,7 +230,7 @@ function drawIt(o)
     end
     ylim(ax, yl);
 
-    xlabel(ax, 'frequency  [MHz]', 'Color', S.col.ink2);
+    xlabel(ax, 'frequency  (MHz)', 'Color', S.col.ink2);
     ylabel(ax, esrYLabel(o, S), 'Color', S.col.ink2);
     S.legend(ax, H, L);
     S.title(ax, esrTitle(o));
@@ -241,7 +241,7 @@ function drawIt(o)
         r = o.y - o.model;
         sg = o.e; if isempty(sg); sg = ones(size(r)); end
         S.resid(axR, o.f, r ./ max(sg, eps), S.col.s1);
-        xlabel(axR, 'frequency  [MHz]', 'Color', S.col.ink2);
+        xlabel(axR, 'frequency  (MHz)', 'Color', S.col.ink2);
         ylabel(axR, 'residual / \sigma', 'Color', S.col.ink2);
         S.tight(axR, o.f);
         S.title(axR, sprintf('\\chi^2_\\nu = %.2f', o.chi2Reduced));

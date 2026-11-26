@@ -464,7 +464,7 @@ function drawIt(c)
     plot(ax1, c.amplitudes, ref, ':', 'LineWidth',1.2,'Color',C.ink3);
     legend(ax1, {'channel 1','channel 2','slope 1 reference'}, 'Location','northwest', ...
            'Box','off','TextColor',C.ink2);
-    style(ax1,C); ylabel(ax1,'20 log_{10}\Omega  [dB]','Color',C.ink2);
+    style(ax1,C); ylabel(ax1,'20 log_{10}\Omega  (dB)','Color',C.ink2);
     title(ax1,'gain curves','Color',C.ink,'FontWeight','normal');
 
     ax2 = subplot(3,1,2); hold(ax2,'on');
@@ -478,7 +478,7 @@ function drawIt(c)
          'Color',C.data,'MarkerFaceColor',C.surface);
     legend(ax2, {'vertical gap (wrong)','solved offset (used)'}, 'Location','best', ...
            'Box','off','TextColor',C.ink2);
-    style(ax2,C); ylabel(ax2,'amplitudeDiff  [dB]','Color',C.ink2);
+    style(ax2,C); ylabel(ax2,'amplitudeDiff  (dB)','Color',C.ink2);
 
     ax3 = subplot(3,1,3); hold(ax3,'on');
     if any(isfinite(c.R))
@@ -491,7 +491,7 @@ function drawIt(c)
              'LineWidth',1.2,'Color',C.fit);
     end
     style(ax3,C); ylabel(ax3,'R','Color',C.ink2);
-    xlabel(ax3,'channel 1 amplitude  [dBm]','Color',C.ink2);
+    xlabel(ax3,'channel 1 amplitude  (dBm)','Color',C.ink2);
     try; set(fig,'Position',[200 80 760 820]); catch; end
 end
 

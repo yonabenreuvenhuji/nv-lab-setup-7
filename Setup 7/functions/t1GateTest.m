@@ -658,7 +658,7 @@ function drawGate(out)
         L{end+1} = labs{i};                                                            %#ok<AGROW>
     end
     set(axT, 'YScale', 'log');      % a leak is a slope change; on a linear axis it is invisible
-    xlabel(axT, '\tau  [\mus]', 'Color', S.col.ink2);
+    xlabel(axT, '\tau  (\mus)', 'Color', S.col.ink2);
     ylabel(axT, 'contrast   |0\rangle - |1\rangle', 'Color', S.col.ink2);
     S.tight(axT, out.A.tau);
     S.legend(axT, H, L);
@@ -690,7 +690,7 @@ function drawGate(out)
     if isfinite(out.slopeCB.intercept)
         S.envelope(axR, td, out.slopeCB.intercept + zeros(size(td)));
     end
-    xlabel(axR, '\tau  [\mus]', 'Color', S.col.ink2);
+    xlabel(axR, '\tau  (\mus)', 'Color', S.col.ink2);
     ylabel(axR, 'log contrast ratio', 'Color', S.col.ink2);
     S.tight(axR, out.A.tau);
     S.legend(axR, H, L);

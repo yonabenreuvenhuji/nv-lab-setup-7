@@ -408,7 +408,7 @@ classdef Sequence < handle
             % Plot
             plot(axisHandle, t, y)
             axis([0 t(end) -0.5 2*numOfChannels-0.5]);
-            xlabel('t [\mus]')
+            xlabel('t (\mus)')
             yticks(axisHandle, 0.5:2:(2*numOfChannels)-1.5)
             yticklabels(axisHandle, channelNames)
             

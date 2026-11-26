@@ -1137,7 +1137,7 @@ function drawIt(o)
     end
 
     if o.opts.logX; set(axM, 'XScale', 'log'); end
-    xlabel(axM, '\tau  [\mus]', 'Color', S.col.ink2);
+    xlabel(axM, '\tau  (\mus)', 'Color', S.col.ink2);
     ylabel(axM, yLabelOf(o, S), 'Color', S.col.ink2);
     keepMask = true(1, numel(o.t)); keepMask(o.downIdx) = false;
     S.focus(axM, [Md(:); reshape(o.y(:, keepMask), [], 1)]);
@@ -1155,7 +1155,7 @@ function drawIt(o)
         end
         S.focus(axR, reshape(Rn(:, keepMask), [], 1), 0.15);
         if o.opts.logX; set(axR, 'XScale', 'log'); end
-        xlabel(axR, '\tau  [\mus]', 'Color', S.col.ink2);
+        xlabel(axR, '\tau  (\mus)', 'Color', S.col.ink2);
         ylabel(axR, 'residual / \sigma', 'Color', S.col.ink2);
         S.title(axR, sprintf('\\chi^2_\\nu = %.2f     lag-1 autocorr %+.2f%s', ...
                              o.chi2Reduced, o.residAutocorr, ...

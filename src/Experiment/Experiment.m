@@ -123,7 +123,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         displayType2 = 'Referenced';
 
         % Axis labels for the experiment window. Empty = built from the parameters
-        % ('Time [us]', 'FL [Normalized]'). Setup 7's experiments set them to the labels
+        % ('Time (us)', 'FL (Normalized)'). Setup 7's experiments set them to the labels
         % their robust fits use (ExpPlotStyle), so the live plot reads like the fit figure.
         plotXLabel = '';            % bottom axis, normal and alternate views
         plotYLabel = '';            % left axis (colorbar in 2D), normal view

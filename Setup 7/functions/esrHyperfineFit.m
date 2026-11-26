@@ -1085,7 +1085,7 @@ function drawIt(o)
                  'Color', S.col.flag);
         end
         ylim(ax, yl);
-        xlabel(ax, 'frequency  [MHz]', 'Color', S.col.ink2);
+        xlabel(ax, 'frequency  (MHz)', 'Color', S.col.ink2);
         ylab = S.yLabel; if ~isempty(o.opts.yLabel); ylab = o.opts.yLabel; end
         ylabel(ax, ylab, 'Color', S.col.ink2);
         S.legend(ax, H, L);
@@ -1094,7 +1094,7 @@ function drawIt(o)
             axR = S.axes(subplot(4, 1, 4));
             S.zeroLine(axR, [min(o.f) max(o.f)]);
             S.resid(axR, o.f, o.residual ./ max(fillErr(o.e)*o.birge, eps), S.col.s1);
-            xlabel(axR, 'frequency  [MHz]', 'Color', S.col.ink2);
+            xlabel(axR, 'frequency  (MHz)', 'Color', S.col.ink2);
             ylabel(axR, 'residual / \sigma', 'Color', S.col.ink2);
             S.tight(axR, o.f);
         end
@@ -1105,7 +1105,7 @@ function drawIt(o)
             plot(ff, o.runnerUp.modelAt(ff), '--');
         end
         plot(ff, o.modelAt(ff), 'k-', 'LineWidth', 2);
-        xlabel('frequency [MHz]'); ylabel('normalised fluorescence');
+        xlabel('frequency (MHz)'); ylabel('normalised fluorescence');
         title(ttl);
     end
 end

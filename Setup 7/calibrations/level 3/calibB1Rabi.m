@@ -1342,8 +1342,8 @@ function drawIt(P, good, fit, rel, fTarget, rhoStar, opts)
     % text box at (f0, wMax^2) lands in the same corner as the legend and under the title --
     % three things fighting for the top of the axes. One place each.
     styleAxes(ax1, C);
-    xlabel(ax1, 'NV line frequency  [MHz]', 'Color', C.ink2);
-    ylabel(ax1, '\Omega^2  [MHz^2]', 'Color', C.ink2);
+    xlabel(ax1, 'NV line frequency  (MHz)', 'Color', C.ink2);
+    ylabel(ax1, '\Omega^2  (MHz^2)', 'Color', C.ink2);
     % 'best' rather than a fixed corner: the Lorentzian peak can sit anywhere in the scan, so
     % which corner is free depends on the data.
     legendOf(ax1, {hD, hF, hH, hBand, hT}, ...
@@ -1399,8 +1399,8 @@ function drawIt(P, good, fit, rel, fTarget, rhoStar, opts)
         ylim(ax2, yl2);
     end
     styleAxes(ax2, C);
-    xlabel(ax2, 'B_\rho requested  [G]', 'Color', C.ink2);
-    ylabel(ax2, 'NV line frequency  [MHz]', 'Color', C.ink2);
+    xlabel(ax2, 'B_\rho requested  (G)', 'Color', C.ink2);
+    ylabel(ax2, 'NV line frequency  (MHz)', 'Color', C.ink2);
     legendOf(ax2, {hD2, hL2, hS2, hB2}, ...
              {sprintf('used (%d)', numel(G)), 'straight-line fit', 'optimum', ...
               sprintf('rejected (%d)', nDrop)}, 'northeast');
@@ -1454,8 +1454,8 @@ function drawIt(P, good, fit, rel, fTarget, rhoStar, opts)
               'Color', C.ink, 'FontWeight', 'bold');
     end
     styleAxes(ax3, C);
-    xlabel(ax3, 'B_\rho requested  [G]', 'Color', C.ink2);
-    ylabel(ax3, 'f - fit  [MHz]', 'Color', C.ink2);
+    xlabel(ax3, 'B_\rho requested  (G)', 'Color', C.ink2);
+    ylabel(ax3, 'f - fit  (MHz)', 'Color', C.ink2);
 
     try; set(fig, 'Position', [200 80 820 860]); catch; end
 end

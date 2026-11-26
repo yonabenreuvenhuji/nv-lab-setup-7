@@ -24,11 +24,11 @@ classdef ExpPlotStyle
         % neither 'ratio' nor 'a.u.'.
         Y_NORMALISED = 'normalised fluorescence   (signal / reference)'
         Y_CONTRAST   = 'contrast   |0\rangle - |1\rangle   (normalised)'
-        X_FREQUENCY  = 'frequency  [MHz]'
-        X_RABI       = 'pulse duration \tau  [\mus]'
-        X_RAMSEY     = 'free evolution \tau  [\mus]'
-        X_ECHO       = 'total evolution time  2\tau\timescycles  [\mus]'
-        X_T1         = '\tau  [\mus]'
+        X_FREQUENCY  = 'frequency  (MHz)'
+        X_RABI       = 'pulse duration \tau  (\mus)'
+        X_RAMSEY     = 'free evolution \tau  (\mus)'
+        X_ECHO       = 'total evolution time  2\tau\timescycles  (\mus)'
+        X_T1         = '\tau  (\mus)'
     end
 
     methods (Static)

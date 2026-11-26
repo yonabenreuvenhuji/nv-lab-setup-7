@@ -412,7 +412,7 @@ classdef AWGExpESR < ExperimentAWG
             
             obj.mirrorSweepAround = []; % Use this for a single frequency range
             
-            obj.displayType2 = 'Raw signal [kcps]';   % the window shows 'Raw signal [V]' with the photodiode (Spcm.localiseUnits)
+            obj.displayType2 = 'Raw signal (kcps)';   % the window shows 'Raw signal (V)' with the photodiode (Spcm.localiseUnits)
             obj.isPlotAlternateAvailable = true;
             
             obj.mCurrentXAxisParam = ExpParamDoubleVector('Frequency', [], [], 'MHz', obj.NAME);

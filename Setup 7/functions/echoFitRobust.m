@@ -1625,9 +1625,9 @@ end
 
 function s = xLabelOf(o)
     if strncmpi(o.tUnits, 'tau', 3)
-        s = 'free evolution \tau  [\mus]';
+        s = 'free evolution \tau  (\mus)';
     else
-        s = 'total evolution time  2\tau\timescycles  [\mus]';
+        s = 'total evolution time  2\tau\timescycles  (\mus)';
     end
 end
 

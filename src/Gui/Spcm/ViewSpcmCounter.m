@@ -24,7 +24,7 @@ classdef ViewSpcmCounter < ViewVBox & EventListener
     end
     
     properties (Constant)
-        BOTTOM_LABEL = 'time [sec]'; % Text for horiz. axis
+        BOTTOM_LABEL = 'time (s)'; % Text for horiz. axis
         
         DEFAULT_WRAP_VALUE = 50;    % Value of wrap set in initiation
         DEFAULT_USING_WRAP = true;  % boolean, does this window uses wrap

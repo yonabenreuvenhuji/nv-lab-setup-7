@@ -20,8 +20,7 @@ classdef ViewTrackablePosition < ViewTrackable
     end
     
     properties (Constant)
-        LEFT_LABEL1 = sprintf('%s(position) [%s]', StringHelper.DELTA, StringHelper.MICRON);
-        LEFT_LABEL2 = 'kpcs'
+        LEFT_LABEL1 = sprintf('%s position (%s)', StringHelper.DELTA, StringHelper.MICRON);
     end
     
     methods
@@ -32,7 +31,7 @@ classdef ViewTrackablePosition < ViewTrackable
             % Set parameters for graphic axes
             obj.vAxes1.YLabel.String = obj.LEFT_LABEL1;
             obj.vAxes2.XLabel.String = obj.LABEL_TIME;
-            obj.vAxes2.YLabel.String = obj.LEFT_LABEL2;
+            obj.vAxes2.YLabel.String = Spcm.signalUnits();     % was 'kpcs' -- a typo, and wrong with the photodiode (V)
             
             %%%% Get objects we will work with: %%%%
             % First and foremost: the trackable experiment

@@ -1110,7 +1110,7 @@ function drawIt(o)
         L{end+1} = sprintf('%d down-weighted', o.nDown);
     end
 
-    xlabel(axM, 'free evolution \tau  [\mus]', 'Color', S.col.ink2);
+    xlabel(axM, 'free evolution \tau  (\mus)', 'Color', S.col.ink2);
     ylabel(axM, yLabelOf(o, S), 'Color', S.col.ink2);
     % Scale to the MODEL and the KEPT points, not to everything -- see fitStyle/focusY.
     keepMask = true(1, numel(o.t)); keepMask(o.downIdx) = false;
@@ -1131,7 +1131,7 @@ function drawIt(o)
         % Same reason as the main panel: two 40-sigma outliers flatten every real residual
         % into a line at zero. Scaled to the kept residuals; the outliers are in the count.
         S.focus(axR, reshape(Rn(:, keepMask), [], 1), 0.15);
-        xlabel(axR, '\tau  [\mus]', 'Color', S.col.ink2);
+        xlabel(axR, '\tau  (\mus)', 'Color', S.col.ink2);
         ylabel(axR, 'residual / \sigma', 'Color', S.col.ink2);
         S.tight(axR, o.t);
         S.title(axR, sprintf('\\chi^2_\\nu = %.2f, lag-1 autocorr %+.2f%s', ...
@@ -1153,7 +1153,7 @@ function drawIt(o)
             end
             xlim(axS, [0, min(max(fAx), 3*max(max(o.freqs), o.A) + 1)]);
         end
-        xlabel(axS, 'frequency  [MHz]', 'Color', S.col.ink2);
+        xlabel(axS, 'frequency  (MHz)', 'Color', S.col.ink2);
         ylabel(axS, '|amplitude|, normalised', 'Color', S.col.ink2);
         S.title(axS, sprintf('dashed = fitted %s MHz', numList(o.freqs, '%.2f')));
     end
