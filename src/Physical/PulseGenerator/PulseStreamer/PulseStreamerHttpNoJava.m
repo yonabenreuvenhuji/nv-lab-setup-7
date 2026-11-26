@@ -9,38 +9,32 @@ classdef PulseStreamerHttpNoJava < handle
     % PulseStreamer.httpRequest keeps using urlread2 whenever Java is available -- the
     % proven path on the hardware -- and uses this class only when it is not.
     %
-    % It sends the request line and headers urlread2's Java HttpURLConnection sends and,
-    % like Java, keeps the connection open between calls: opening a tcpclient costs
-    % ~60-100 ms, a request on an open connection ~2 ms, and the Pulse Streamer is polled
-    % in a loop. Keeping a connection open is made safe by:
-    %   - closing it after IDLE_CLOSE_SECONDS without use (Java does the same after ~5 s),
-    %     so a connection the server may have timed out is never reused, and an idle
-    %     connection never ties up the server;
-    %   - on R2026b+, where tcpclient can report a closed peer (Connected), checking it
-    %     before reuse;
-    %   - if a REUSED connection fails before a single reply byte arrived, the server
-    %     never processed the request, so it is sent once more on a fresh connection. It
-    %     is never re-sent once reply bytes have arrived, so a command cannot run twice.
-    % Replies with Content-Length, chunked encoding, or a body that ends when the server
-    % closes are all handled. A non-2xx status is returned, not thrown, like urlread2.
+    % One connection per request. The Pulse Streamer closes the connection after every
+    % reply and sends no Content-Length, so the reply ends when the server closes
+    % (measured on setup 7, R2026b). Reusing connections is therefore impossible, and
+    % this class sends "Connection: close" and never tries.
     %
-    % Base MATLAB only (tcpclient, timer); no Java and no toolbox.
+    % Finding the end of a close-delimited reply:
+    %   - R2026b+: tcpclient's DetectServerDisconnect reports the close (Connected
+    %     becomes false), so the reply is complete as soon as it happens (~59 ms per
+    %     request on setup 7, nearly all of it opening the connection). The close is
+    %     also reported through ErrorOccurredFcn, whose default prints "An unexpected
+    %     error was encountered. Additional Information: End of file"; a silent
+    %     handler is installed because here the close is the normal end of a reply.
+    %   - Older releases: the reply is taken as complete after 50 ms without new bytes.
+    % Replies with Content-Length or chunked encoding are handled too. A non-2xx
+    % status is returned, not thrown, like urlread2.
+    %
+    % Base MATLAB only (tcpclient); no Java and no toolbox.
 
     properties (Constant)
-        IDLE_CLOSE_SECONDS = 2      % close a kept-alive connection after this long unused
+        QUIET_SECONDS = 0.05        % no server-close detection: reply done after this silence
     end
 
     properties (SetAccess = private)
         host                        % char
         port                        % double
         timeout                     % seconds, for connecting and for each reply
-    end
-
-    properties (Access = private)
-        t = []                      % tcpclient while a connection is open
-        idleTimer = []              % closes the connection when unused
-        busy = false                % true while a request is in flight
-        replyBytes = 0              % bytes of the current reply received so far
     end
 
     methods
@@ -51,104 +45,58 @@ classdef PulseStreamerHttpNoJava < handle
             obj.host = char(host);
             obj.port = port;
             obj.timeout = timeout;
-            obj.idleTimer = timer('ExecutionMode', 'singleShot', ...
-                                  'StartDelay', obj.IDLE_CLOSE_SECONDS, ...
-                                  'TimerFcn', @(~, ~) obj.closeIfIdle(), ...
-                                  'Name', 'PulseStreamerHttpNoJava idle close');
         end
 
         function [body, status] = post(obj, path, payload)
-            stop(obj.idleTimer);
-            obj.busy = true;
-            cleanupBusy = onCleanup(@() obj.setIdle());
             bytes = unicode2native(char(payload), 'UTF-8');
             request = [uint8(sprintf(['POST %s HTTP/1.1\r\n' ...
                                       'Content-Type: application/x-www-form-urlencoded\r\n' ...
                                       'Host: %s:%d\r\n' ...
                                       'Accept: text/html, image/gif, image/jpeg, *; q=.2, */*; q=.2\r\n' ...
-                                      'Connection: keep-alive\r\n' ...
+                                      'Connection: close\r\n' ...
                                       'Content-Length: %d\r\n\r\n'], ...
                                      path, obj.host, obj.port, numel(bytes))), ...
                        reshape(bytes, 1, [])];
-            for attempt = 1:2
-                reused = obj.isOpen();
-                if ~reused
-                    obj.open();
-                end
-                obj.replyBytes = 0;
-                try
-                    write(obj.t, request);
-                    [body, status, keepAlive] = obj.readResponse();
-                catch err
-                    obj.close();
-                    if reused && obj.replyBytes == 0 && attempt == 1
-                        continue        % stale connection, request never processed: retry once
-                    end
-                    rethrow(err);
-                end
-                if keepAlive
-                    start(obj.idleTimer);
-                else
-                    obj.close();
-                end
-                return
-            end
-        end
-
-        function close(obj)
-            if ~isempty(obj.t)
-                try
-                    delete(obj.t);      % deleting a tcpclient closes the connection
-                catch
-                end
-                obj.t = [];
-            end
-        end
-
-        function delete(obj)
-            obj.close();
-            if ~isempty(obj.idleTimer) && isvalid(obj.idleTimer)
-                stop(obj.idleTimer);
-                delete(obj.idleTimer);
-            end
+            [t, detectsClose] = obj.open();
+            closeConnection = onCleanup(@() delete(t));    % deleting a tcpclient closes it
+            write(t, request);
+            [body, status] = obj.readResponse(t, detectsClose);
         end
     end
 
     methods (Access = private)
-        function closeIfIdle(obj)
-            if ~obj.busy
-                obj.close();
-            end
-        end
-
-        function setIdle(obj)
-            obj.busy = false;
-        end
-
-        function tf = isOpen(obj)
-            tf = ~isempty(obj.t) && isvalid(obj.t);
-            if tf && isprop(obj.t, 'Connected') && ~obj.t.Connected   % R2026b+
-                obj.close();
-                tf = false;
-            end
-        end
-
-        function open(obj)
+        function [t, detectsClose] = open(obj)
             args = {'Timeout', obj.timeout, 'ConnectTimeout', obj.timeout, 'EnableTransferDelay', false};
             try
-                % R2026b+: let tcpclient notice a server-closed connection (see isOpen).
-                obj.t = tcpclient(obj.host, obj.port, args{:}, 'DetectServerDisconnect', true);
-            catch
-                obj.t = tcpclient(obj.host, obj.port, args{:});
+                t = tcpclient(obj.host, obj.port, args{:}, 'DetectServerDisconnect', true);   % R2026b+
+                detectsClose = true;
+            catch err
+                if ~strcmp(err.identifier, 'MATLAB:InputParser:UnmatchedParameter') ...
+                        && ~contains(err.message, 'DetectServerDisconnect')
+                    rethrow(err)        % a real connection failure, not an older release
+                end
+                t = tcpclient(obj.host, obj.port, args{:});
+                detectsClose = false;
+            end
+            if detectsClose
+                % The server closing is how every reply ends; don't print it as an error.
+                % Set before the request is written, so before the server can close.
+                t.ErrorOccurredFcn = @(~, ~) [];
             end
         end
 
-        function [body, status, keepAlive] = readResponse(obj)
+        function [body, status] = readResponse(obj, t, detectsClose)
             started = tic;
-            raw = obj.readMore(started);
-            crlf2 = strfind(char(raw), sprintf('\r\n\r\n'));
+            raw = uint8([]);
+            crlf2 = [];
             while isempty(crlf2)
-                raw = [raw, obj.readMore(started)]; %#ok<AGROW>
+                [b, closed] = obj.readMore(t, detectsClose, started);
+                if closed
+                    error('PulseStreamerHttpNoJava:closed', ...
+                          'The Pulse Streamer at %s:%d closed the connection without a reply.', ...
+                          obj.host, obj.port);
+                end
+                raw = [raw, b]; %#ok<AGROW>
                 crlf2 = strfind(char(raw), sprintf('\r\n\r\n'));
             end
             head = char(raw(1:crlf2(1)-1));
@@ -159,19 +107,13 @@ classdef PulseStreamerHttpNoJava < handle
                       obj.host, obj.port, head(1:min(end, 80)));
             end
             status = str2double(tok{2});
-            connHdr = regexp(head, '(?im)^connection:\s*([^\r\n]*)', 'tokens', 'once');
-            if strcmp(tok{1}, '1.0')
-                keepAlive = ~isempty(connHdr) && contains(lower(connHdr{1}), 'keep-alive');
-            else
-                keepAlive = isempty(connHdr) || ~contains(lower(connHdr{1}), 'close');
-            end
             lenTok = regexp(head, '(?im)^content-length:\s*(\d+)', 'tokens', 'once');
             isChunked = ~isempty(regexp(head, '(?im)^transfer-encoding:[^\r\n]*chunked', 'once'));
 
             if ~isempty(lenTok)
                 n = str2double(lenTok{1});
                 while numel(rest) < n
-                    rest = [rest, obj.readMore(started)]; %#ok<AGROW>
+                    rest = [rest, obj.readOrFail(t, detectsClose, started)]; %#ok<AGROW>
                 end
                 data = rest(1:n);
             elseif isChunked
@@ -179,7 +121,7 @@ classdef PulseStreamerHttpNoJava < handle
                 while true
                     lineEnd = strfind(char(rest), sprintf('\r\n'));
                     while isempty(lineEnd)
-                        rest = [rest, obj.readMore(started)]; %#ok<AGROW>
+                        rest = [rest, obj.readOrFail(t, detectsClose, started)]; %#ok<AGROW>
                         lineEnd = strfind(char(rest), sprintf('\r\n'));
                     end
                     n = hex2dec(strtrim(strtok(char(rest(1:lineEnd(1)-1)), ';')));
@@ -188,20 +130,27 @@ classdef PulseStreamerHttpNoJava < handle
                         break                               % trailers, if any, are ignored
                     end
                     while numel(rest) < n + 2
-                        rest = [rest, obj.readMore(started)]; %#ok<AGROW>
+                        rest = [rest, obj.readOrFail(t, detectsClose, started)]; %#ok<AGROW>
                     end
                     data = [data, rest(1:n)]; %#ok<AGROW>
                     rest = rest(n+3:end);                   % skip the chunk and its CRLF
                 end
-            else
-                % No length given: the body ends when the server closes the connection.
-                keepAlive = false;
+            elseif detectsClose
+                % The Pulse Streamer's style: the body ends when the server closes.
                 data = rest;
-                idle = tic;
-                while toc(idle) < 0.05
-                    if obj.t.NumBytesAvailable > 0
-                        data = [data, obj.readMore(started)]; %#ok<AGROW>
-                        idle = tic;
+                closed = false;
+                while ~closed
+                    [b, closed] = obj.readMore(t, detectsClose, started);
+                    data = [data, b]; %#ok<AGROW>
+                end
+            else
+                % Same, without close detection: done after QUIET_SECONDS of silence.
+                data = rest;
+                quiet = tic;
+                while toc(quiet) < obj.QUIET_SECONDS
+                    if t.NumBytesAvailable > 0
+                        data = [data, read(t, t.NumBytesAvailable, 'uint8')]; %#ok<AGROW>
+                        quiet = tic;
                     else
                         pause(0.0002);
                     end
@@ -210,10 +159,17 @@ classdef PulseStreamerHttpNoJava < handle
             body = native2unicode(data, 'UTF-8');
         end
 
-        function b = readMore(obj, started)
+        function [b, closed] = readMore(obj, t, detectsClose, started)
             % Wait for at least one byte (polling: ~1 ms faster per request than a
-            % blocking read), then take everything already waiting.
-            while obj.t.NumBytesAvailable == 0
+            % blocking read), then take everything already waiting. closed is true, with
+            % no bytes, once the server has closed and everything it sent was read.
+            closed = false;
+            while t.NumBytesAvailable == 0
+                if detectsClose && ~t.Connected && t.NumBytesAvailable == 0
+                    b = uint8([]);
+                    closed = true;
+                    return
+                end
                 if toc(started) > obj.timeout
                     error('PulseStreamerHttpNoJava:timeout', ...
                           'No complete reply from the Pulse Streamer at %s:%d within %g s.', ...
@@ -221,8 +177,16 @@ classdef PulseStreamerHttpNoJava < handle
                 end
                 pause(0.0002);
             end
-            b = read(obj.t, obj.t.NumBytesAvailable, 'uint8');
-            obj.replyBytes = obj.replyBytes + numel(b);
+            b = read(t, t.NumBytesAvailable, 'uint8');
+        end
+
+        function b = readOrFail(obj, t, detectsClose, started)
+            [b, closed] = obj.readMore(t, detectsClose, started);
+            if closed
+                error('PulseStreamerHttpNoJava:truncated', ...
+                      'The Pulse Streamer at %s:%d closed the connection in the middle of a reply.', ...
+                      obj.host, obj.port);
+            end
         end
     end
 end

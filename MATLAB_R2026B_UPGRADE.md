@@ -28,14 +28,21 @@ New files:
 - `Setup 7/functions/matlabUpgradeCheck.m`
 
 ### How the no-Java Pulse Streamer transport behaves
-- It sends the same request line and headers as Java's `HttpURLConnection`, and keeps the
-  connection open between calls. Opening a `tcpclient` costs ~60–100 ms; a request ~2 ms.
-- It closes an idle connection after 2 s (Java: ~5 s). On R2026b+ it also checks
-  `tcpclient.Connected` before reusing one.
-- If a *reused* connection fails before any reply byte arrives, it retries once on a fresh
-  connection. It never re-sends after reply bytes have arrived, so a command can't run twice.
+- It sends the same request line and headers as Java's `HttpURLConnection`, except
+  `Connection: close`: one connection per request.
+- The real Pulse Streamer closes the connection after every reply and sends no
+  `Content-Length`, so the reply ends when the server closes (measured on the lab PC). Keeping
+  connections open is impossible with it.
+- On R2026b, `DetectServerDisconnect` reports that close, so a reply is complete as soon as it
+  happens: **~59 ms per request** on setup 7, almost all of it `tcpclient` opening the
+  connection (Java: a few ms). MATLAB also announces the close as "An unexpected error was
+  encountered. Additional Information: End of file"; the transport installs a silent
+  `ErrorOccurredFcn`, because here the close is the normal end of a reply.
+- On older releases (no close detection) a reply is complete after 50 ms without new bytes.
 - Handles `Content-Length`, chunked and close-delimited replies. A non-2xx status is returned,
   not thrown, as with `urlread2`.
+- Because Java is ~20× faster per command, installing the OpenJDK add-on (§3, step 3) is
+  recommended on the lab PC; this transport is the fallback.
 
 ### DataHash without Java
 - The digest is two 64-bit `keyHash` values over the same byte stream DataHash always built,
@@ -65,9 +72,11 @@ New files:
 - **Encoder:** byte-identical to the Java encoder for 0 to 123,457 pulses, all padding cases.
 - **HTTP transports:**
   - Patched `urlread2` and `PulseStreamerHttpNoJava` return the same replies and status codes as
-    the original `urlread2`. Tested on keep-alive, chunked, close-delimited and HTTP 500 replies,
-    a 2 MB upload, a server that drops connections (retry), and a non-HTTP server (clean timeout).
-  - Per call: 1.8 ms `urlread2`, 2.4 ms no-Java transport.
+    the original `urlread2`. Tested on `Content-Length`, chunked, HTTP/1.0 and HTTP/1.1
+    close-delimited (the Pulse Streamer's style) and HTTP 500 replies, 2 MB uploads, and a port
+    with nothing listening (clean error).
+  - On the lab PC (R2026b, real Pulse Streamer), a hand-written test of the same approach:
+    ~59 ms per request, no "End of file" messages. The class itself still needs a run there.
 - **Smoke test**, with and **without Java** (`matlab -nojvm`, standing in for R2026b):
   - `Setup.init` with setup 7's devices in dummy mode, except the pulse generator, which is the
     real `PulseStreamerNewClass` talking to a local stand-in Pulse Streamer: all objects created.
