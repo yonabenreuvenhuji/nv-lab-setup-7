@@ -12,7 +12,9 @@ function allOk = testEsrFit(realFile)
 %
 %   1  hyperfine       14N / 15N / unresolved / none, pulse shape, polarised depths, a
 %                      non-nitrogen pair, no error bars, forced count, low SNR, pulls
-%   2  hyperfine gate  'auto' tests a narrow pulsed-like line and leaves a CW line alone
+%   2  hyperfine gate  'auto' tests any line on a fine grid -- a resolved pulsed triplet whose
+%                      one-line FWHM is the envelope included -- and leaves a 1 MHz-step CW
+%                      line alone; a broad line on a fine grid comes back not resolved
 %   3  resonance       at zero field just outside and inside the sweep, nLines = 1 counting
 %                      the NV line only, no false resonance on clean data, off, and a hint
 %   4  field           45 G with and without a resonance; one pair; zero field; a window
@@ -126,6 +128,20 @@ function allOk = testEsrFit(realFile)
     y = 1 - 0.012*lor(fw, 2870.4, 10) + 5e-4*randn(size(fw));
     o = esrFitRobust(mergeOpts(q, struct('f', fw, 'y', y, 'e', 5e-4*ones(size(fw)))));
     check('auto: a 10 MHz CW line at 1 MHz steps is NOT tested', ~o.hyperfine.tested);
+    % The 2026-11-26 pulsed sweep: three pi-pulse lines (tau 0.572 us) on a 0.2 MHz grid. Fitted
+    % as ONE line its FWHM is the envelope, above the 3A = 6.5 MHz the gate once demanded.
+    fp = (2752:0.2:2772)'; tp = 0.572; sp = 4e-5;
+    y = 0.99975 + model(fp, 2762.85, 2.16, [1 1 1]*2.7e-3, 0.8, 'pulse', tp) - 1 + sp*randn(size(fp));
+    o = esrFitRobust(mergeOpts(q, struct('f', fp, 'y', y, 'e', sp*ones(size(fp)), 'tau', tp)));
+    check(sprintf('auto: a resolved pulsed triplet whose one-line FWHM is %.1f MHz is tested', ...
+          o.lines(1).fwhm), o.lines(1).fwhm > 3*2.16 && o.hyperfine.tested);
+    check('   ... and called 14N with A within 3 sigma', strcmp(o.hyperfine.isotope, '14N') && ...
+          o.hyperfine.resolved && abs(o.hyperfine.splitting - 2.16) < 3*o.hyperfine.splittingErr);
+    fw = (2840:0.5:2900)';
+    y = 1 - 0.012*lor(fw, 2870.4, 10) + 5e-4*randn(size(fw));
+    o = esrFitRobust(mergeOpts(q, struct('f', fw, 'y', y, 'e', 5e-4*ones(size(fw)))));
+    check('auto: a 10 MHz line at 0.5 MHz steps is tested and NOT resolved', ...
+          o.hyperfine.tested && o.hyperfine.nDips == 1 && ~o.hyperfine.resolved);
 
     % =====================================================================
     fprintf('\n3. RESONANCE\n');

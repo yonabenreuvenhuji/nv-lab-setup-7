@@ -98,9 +98,13 @@ function out = esrFitRobust(args)
 % THE HYPERFINE
 % ===================================================================
 %
-% Tried automatically only when the data can show it: ONE NV line, a step <= 0.6 MHz, and
-% that line no wider than 3 x 2.16 MHz -- a narrow pulsed sweep. A CW sweep (7 to 25 MHz
-% lines) never qualifies, so nothing changes there. The model is one multiplet, shared
+% Tried automatically when the data can show it: ONE NV line and a step <= 0.6 MHz -- a
+% pulsed sweep (CW sweeps here step 1 to 2 MHz and never qualify). The one-line FWHM is NOT
+% a gate: fitted to a resolved 14N triplet it measures the envelope, about 2A plus the
+% pulse's sidelobes -- 7.1 MHz on three ~1.4 MHz lines at tau = 0.572 us, which a 3A =
+% 6.5 MHz ceiling once skipped. A broad line on a fine grid comes back "1 dip, not
+% resolved" and the figure is unchanged; on a wide fine grid the test costs ~25 s (301
+% points), against 1 to 4 s for a 100-point pulsed sweep. The model is one multiplet, shared
 % width and shape, EXACTLY equal spacing (the quadrupole term cancels in the transition):
 %
 %   3 dips  14N, m = -1 0 +1    A ~ 2.16 MHz       2 dips  15N, m = -1/2 +1/2   A ~ 3.03 MHz
@@ -1296,9 +1300,10 @@ function hf = hyperfineStage(x, y, ee, F, tau, opts, K)
     end
     L = F.lines(1);
     dx = median(diff(x));
-    if strcmp(m, 'auto') && (dx > 0.6 || L.fwhm > 3*K.A14N)
-        hf.why = sprintf(['not resolvable here: step %.2f MHz, line FWHM %.1f MHz (needs ' ...
-                          '<= 0.6 and <= %.1f)'], dx, L.fwhm, 3*K.A14N);
+    % Only the STEP gates it, not L.fwhm: on a resolved triplet that is the envelope (see THE
+    % HYPERFINE in the header).
+    if strcmp(m, 'auto') && dx > 0.6
+        hf.why = sprintf('not resolvable here: step %.2f MHz (needs <= 0.6)', dx);
         return
     end
     % A window around the line: the multiplet model has one baseline and no resonance.
