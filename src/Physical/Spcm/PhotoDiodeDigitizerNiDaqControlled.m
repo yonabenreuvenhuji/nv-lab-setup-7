@@ -568,7 +568,7 @@ classdef PhotoDiodeDigitizerNiDaqControlled < Spcm & NiDaqControlled
     end
 
     methods
-        function onNiDaqReset(obj)
+        function onNiDaqReset(obj, niDaq) %#ok<INUSD> NiDaqControlled.onEvent passes the NiDaq
             % This function jumps when the NiDaq resets
 %             if obj.nScanIntegration > 0
 %                 prepareMeasureByStageInternal(obj, niDaq);
