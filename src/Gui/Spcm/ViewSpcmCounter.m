@@ -44,10 +44,7 @@ classdef ViewSpcmCounter < ViewVBox & EventListener
                 obj.isStandalone = varargin{2};
             end
             
-            obj.leftLabel = 'kcps';
-            if spcm.hasPhotodiode()
-                obj.leftLabel = 'volt';
-            end
+            obj.leftLabel = Spcm.signalUnits();     % 'kcps', or 'V' with the photodiode
             
             %% Plot Area %%%
             % Set initial values for properties of axes 

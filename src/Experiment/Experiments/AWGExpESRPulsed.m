@@ -200,8 +200,11 @@ classdef AWGExpESRPulsed < ExperimentAWG
             obj.laserInitializationDuration = 30;    % us
 
             obj.isPlotAlternateAvailable = true;
-            obj.displayType2 = 'kcps';
+            obj.displayType2 = 'Raw signal';     % was 'kcps' -- wrong with the photodiode (V)
             obj.mCurrentXAxisParam = ExpParamDoubleVector('Frequency', [], [], 'MHz', obj.NAME);
+            % Labels as in the robust fit's figure (ExpPlotStyle / fitStyle)
+            obj.plotXLabel = ExpPlotStyle.X_FREQUENCY;
+            obj.plotYLabel = ExpPlotStyle.Y_NORMALISED;
             obj.signalParam = ExpResultDoubleVector('FL', [], [], 'Normalized', obj.NAME);
         end
 
@@ -1191,7 +1194,7 @@ classdef AWGExpESRPulsed < ExperimentAWG
         function params = alternateSignal(obj)
             % Alternate view: the signal and reference windows themselves.
             if obj.currIter == 0
-                params = ExpResultDoubleVector('FL', [], [], 'kcps', obj.NAME);
+                params = ExpResultDoubleVector('fluorescence', [], [], Spcm.signalUnits(), obj.NAME);
                 return
             end
             S1 = squeeze(obj.signal(1, :, 1:obj.currIter));
@@ -1206,8 +1209,8 @@ classdef AWGExpESRPulsed < ExperimentAWG
             end
             refName = BooleanHelper.ifTrueElse(strcmp(obj.referenceMode, 'noMW'), ...
                                                'Reference (no MW)', 'Reference (laser tail)');
-            p1 = ExpResultDoubleVector('FL', S1, S1e, 'kcps', obj.NAME, 'After MW pulse');
-            p2 = ExpResultDoubleVector('FL', S2, S2e, 'kcps', obj.NAME, refName);
+            p1 = ExpResultDoubleVector('fluorescence', S1, S1e, Spcm.signalUnits(), obj.NAME, 'After MW pulse');
+            p2 = ExpResultDoubleVector('fluorescence', S2, S2e, Spcm.signalUnits(), obj.NAME, refName);
             params = {p1, p2, {'yParam', 'yParam2'}};
         end
     end

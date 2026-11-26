@@ -57,7 +57,7 @@ classdef ViewExperimentPlot < ViewVBox & EventListener
                 'UserData', false ... usually, == normal
                 );
             obj.radioAlterDisplay = uicontrol(obj.PROP_RADIO{:}, 'Parent', bgDisplayType, ...
-                'String', exp.displayType2, ...
+                'String', Spcm.localiseUnits(exp.displayType2), ... older experiments say 'kcps'
                 'Position', [padding, padding, rbWidth, rbHeight], ...  % [fromLeft, fromBottom, width, height]
                 'UserData', true ... usually, == referenced
                 );
@@ -96,9 +96,12 @@ classdef ViewExperimentPlot < ViewVBox & EventListener
                 return
             end
             isVisible = true;
-            AxesHelper.copyToNewFigure(exp.gAxes, isVisible);
+            fig = AxesHelper.copyToNewFigure(exp.gAxes, isVisible);
+            ExpPlotStyle.styleFigure(fig);
             expNameFixed = strrep(obj.expName, '_', ' ');
-            title(expNameFixed);
+            ax = findobj(fig, 'Type', 'axes', 'UserData', 'experiment');   % the plot, not a top/right axis
+            if isempty(ax); ax = gca; end
+            ExpPlotStyle.styleTitle(ax(1), expNameFixed);
         end
         
         function btnStopCallback(obj, ~, ~)

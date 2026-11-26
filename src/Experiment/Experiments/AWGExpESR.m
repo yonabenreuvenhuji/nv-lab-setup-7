@@ -412,10 +412,13 @@ classdef AWGExpESR < ExperimentAWG
             
             obj.mirrorSweepAround = []; % Use this for a single frequency range
             
-            obj.displayType2 = 'kcps';
+            obj.displayType2 = 'Raw signal';     % was 'kcps' -- wrong with the photodiode (V)
             obj.isPlotAlternateAvailable = true;
             
             obj.mCurrentXAxisParam = ExpParamDoubleVector('Frequency', [], [], 'MHz', obj.NAME);
+            % Labels as in the robust fit's figure (ExpPlotStyle / fitStyle)
+            obj.plotXLabel = ExpPlotStyle.X_FREQUENCY;
+            obj.plotYLabel = ExpPlotStyle.Y_NORMALISED;
             obj.signalParam = ExpResultDoubleVector('FL', [], [], 'Normalized', obj.NAME, 'Normal');
             obj.signalParam2 = ExpResultDoubleVector('FL', [], [], 'Normalized', obj.NAME, 'Mirrored');
         end
@@ -1696,7 +1699,7 @@ end
             % {'yParam', 'yParam2'} or {'yParam', 'yParam2+'}
             
             if obj.currIter == 0
-                params = ExpResultDoubleVector('FL', [], [], 'kcps', obj.NAME);
+                params = ExpResultDoubleVector('fluorescence', [], [], Spcm.signalUnits(), obj.NAME);
                 return
             end
             S1 = squeeze(obj.signal(1, :, 1:obj.currIter));
@@ -1710,8 +1713,8 @@ end
                 S1 = mean(S1, 2);
                 S2 = mean(S2, 2);
             end
-            dataParam = ExpResultDoubleVector('FL', S1, S1sterr, 'kcps', obj.NAME, 'With MW');
-            dataParam2 = ExpResultDoubleVector('FL', S2, S2sterr, 'kcps', obj.NAME, 'Without MW');
+            dataParam = ExpResultDoubleVector('fluorescence', S1, S1sterr, Spcm.signalUnits(), obj.NAME, 'With MW');
+            dataParam2 = ExpResultDoubleVector('fluorescence', S2, S2sterr, Spcm.signalUnits(), obj.NAME, 'Without MW');
             
             if ~obj.isSingleMeasurement
                 S3 = squeeze(obj.signal(3, :, 1:obj.currIter));
@@ -1726,8 +1729,8 @@ end
                     S3 = mean(S3, 2);
                     S4 = mean(S4, 2);
                 end
-                dataParam3 = ExpResultDoubleVector('FL', S3, S3sterr, 'kcps', obj.NAME, 'With MW - Mirrored');
-                dataParam4 = ExpResultDoubleVector('FL', S4, S4sterr, 'kcps', obj.NAME, 'Without MW - Mirrored');
+                dataParam3 = ExpResultDoubleVector('fluorescence', S3, S3sterr, Spcm.signalUnits(), obj.NAME, 'With MW - Mirrored');
+                dataParam4 = ExpResultDoubleVector('fluorescence', S4, S4sterr, Spcm.signalUnits(), obj.NAME, 'Without MW - Mirrored');
                 params = {dataParam, {dataParam2, dataParam3, dataParam4}, {'yParam', 'yParam2+'}};
             else
                 params = {dataParam, dataParam2, {'yParam', 'yParam2'}};

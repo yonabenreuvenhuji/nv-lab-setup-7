@@ -176,6 +176,10 @@ classdef AWGExpT1 < ExperimentAWG
             obj.laserInitializationDuration = 10;   % laser initialization in pulsed experiments in us
             
             obj.mCurrentXAxisParam = ExpParamDoubleVector('Time', [], [], StringHelper.MICROSEC, obj.NAME);
+            % Labels as in the robust fit's figure (ExpPlotStyle / fitStyle)
+            obj.plotXLabel = ExpPlotStyle.X_T1;
+            obj.plotYLabel = ExpPlotStyle.Y_NORMALISED;
+            obj.plotYLabelAlternate = ExpPlotStyle.Y_CONTRAST;   % alternateSignal = |0> - |1>
             obj.topParam = ExpParamDoubleVector(StringHelper.TAU, [], [], StringHelper.MICROSEC, obj.NAME);
             % THE LABELS ARE THE OTHER WAY ROUND FROM ECHO AND RAMSEY, because the sequence is.
             %

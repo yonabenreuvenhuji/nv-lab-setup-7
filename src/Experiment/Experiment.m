@@ -121,6 +121,13 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         % Default values, may be overridden by subclasses
         displayType1 = 'Normal';
         displayType2 = 'Referenced';
+
+        % Axis labels for the experiment window. Empty = built from the parameters
+        % ('Time [us]', 'FL [Normalized]'). Setup 7's experiments set them to the labels
+        % their robust fits use (ExpPlotStyle), so the live plot reads like the fit figure.
+        plotXLabel = '';            % bottom axis, normal and alternate views
+        plotYLabel = '';            % left axis (colorbar in 2D), normal view
+        plotYLabelAlternate = '';   % left axis, alternate view
     end
     
     properties (Constant)
@@ -790,7 +797,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             
             %%% Copy axes to an invisible figure
             figureInvis = AxesHelper.copyToNewFigure(obj.gAxes);
-            
+            ExpPlotStyle.styleFigure(figureInvis);
+
             %%% Get name for saving
             filename = PathHelper.removeDotSuffix(filename);
             fullpath = PathHelper.joinToFullPath(folder, filename);
@@ -831,6 +839,24 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             end
         end
         
+        function [xLabel, yLabel] = plotLabels(obj, xAxisParam, dataParam, isAlternate)
+            % Axis labels for the experiment window: the plotXLabel / plotYLabel /
+            % plotYLabelAlternate a subclass set, else the ones built from the parameters.
+            xLabel = xAxisParam.label;
+            if ~isempty(obj.plotXLabel) && isequal(xAxisParam, obj.mCurrentXAxisParam)
+                xLabel = obj.plotXLabel;    % not when an alternate view brings its own x axis
+            end
+
+            % 'kcps' in a parameter's units is wrong when the detector is the photodiode
+            % (it reads volts), and many experiments still say it. Fix it here for all of them.
+            yLabel = Spcm.localiseUnits(dataParam.label);
+            if isAlternate
+                if ~isempty(obj.plotYLabelAlternate); yLabel = obj.plotYLabelAlternate; end
+            elseif ~isempty(obj.plotYLabel)
+                yLabel = obj.plotYLabel;
+            end
+        end
+
         function plotResults(obj)
             % Plots the data in axes inside ViewExperimentPlot. Can be
             % overridden to allow for special kinds of plots, when an
@@ -842,7 +868,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             end
             
             % Check whether we have an alternate plot
-            if obj.isPlotAlternate && obj.currIter > 0
+            isAlternate = obj.isPlotAlternate && obj.currIter > 0;
+            if isAlternate
                 params = obj.alternateSignal();
                 if iscell(params) % Check if there are multiple params
                     paramsLegend = params{end};
@@ -902,15 +929,15 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             
             if isempty(obj.gAxes.Children)
                 % Nothing is plotted yet
-                bottomLabel = xAxisParam.label;
+                [bottomLabel, dataLabel] = obj.plotLabels(xAxisParam, dataParam, isAlternate);
                 switch d
                     case 1
-                        leftLabel = dataParam.label;
+                        leftLabel = dataLabel;
                         AxesHelper.fill(obj.gAxes, data, d, ...
                             firstAxisVector, [], bottomLabel, leftLabel, err);
                     case 2
                         leftLabel = obj.mCurrentYAxisParam.label;
-                        datalabel = dataParam.label;
+                        datalabel = dataLabel;
                         AxesHelper.fill(obj.gAxes, data, d, ...
                             firstAxisVector, secondAxisVector, bottomLabel, leftLabel, err, datalabel);
                     otherwise
@@ -964,7 +991,15 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             else
                 legend(obj.gAxes, 'off')
             end
-            
+
+            % The robust fits' look (fitStyle), redone after every update because each
+            % update replaces the lines. Never allowed to stop a run over a cosmetic problem.
+            try
+                ExpPlotStyle.apply(obj.gAxes, d, firstAxisVector);
+            catch styleErr  % not 'err': that holds the error bars, used just below
+                warning('Experiment:plotStyle', 'Experiment plot styling failed: %s', styleErr.message);
+            end
+
             obj.summaryData.x = xAxisParam.value;
             obj.summaryData.y = data';
             obj.summaryData.err = err';

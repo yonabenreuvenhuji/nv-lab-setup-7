@@ -139,6 +139,34 @@ classdef (Abstract) Spcm < EventSender
             % Add to object map
             addBaseObject(spcmObject);
         end
+
+        function units = signalUnits()
+            % The unit of the raw detector reading, for axis labels.
+            %
+            % A photon counter reports kilocounts per second. A photodiode read by the
+            % digitizer reports VOLTS -- processData divides counts by the detection window
+            % only when there is no photodiode, so the photodiode numbers never are kcps.
+            % Labels used to say 'kcps' everywhere regardless, which on setup 7 (photodiode)
+            % was simply wrong.
+            units = 'kcps';
+            try
+                spcm = getObjByName(Spcm.NAME);
+                if ~isempty(spcm) && spcm.hasPhotodiode
+                    units = 'V';
+                end
+            catch
+                % No detector loaded (e.g. viewing a saved run offline): keep the default.
+            end
+        end
+
+        function str = localiseUnits(str)
+            % Replace the word 'kcps' in a label with the detector's real unit.
+            % 'FL [kcps]' -> 'FL [V]', 'kcps difference' -> 'V difference'.
+            units = Spcm.signalUnits();
+            if ischar(str) && ~strcmp(units, 'kcps')
+                str = regexprep(str, '\<kcps\>', units, 'ignorecase');
+            end
+        end
     end
     
     methods % Available properties    

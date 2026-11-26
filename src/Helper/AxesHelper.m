@@ -47,7 +47,7 @@ classdef AxesHelper
                 if ~isempty(twoDLabel)
                     xlabel(c, twoDLabel)
                 else
-                    xlabel(c, 'kcps')
+                    xlabel(c, Spcm.signalUnits())   % 'V' with the photodiode
                 end
             end
             

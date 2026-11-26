@@ -39,19 +39,19 @@ classdef Tracker < EventSender & EventListener & Savable
             switch referenceType
                 case obj.REFERENCE_TYPE_KCPS
                     reference = obj.kcpsReference;
-                    refName = ' kcps';
+                    refName = [' ' Spcm.signalUnits()];   % ' V' with the photodiode
                 otherwise
                     EventStation.anonymousError('This Shouldn''t have happenned!')
             end
             
             if isempty(reference)
                 obj.kcpsReference = newValue;
-                fprintf('Setting tracker reference as %.2f%s\n', newValue, refName);
+                fprintf('Setting tracker reference as %.4g%s\n', newValue, refName);
             elseif (newValue - reference) > newSte
                 obj.kcpsReference = newValue;
-                fprintf('Tracking reference jumped, setting value to %.2f%s\n', newValue, refName);
+                fprintf('Tracking reference jumped, setting value to %.4g%s\n', newValue, refName);
             elseif newValue < (reference * thresholdFraction4StartTrack)
-                fprintf('Starting tracking, current counts are %.2f%s, reference is %.2f%s\n', ...
+                fprintf('Starting tracking, current counts are %.4g%s, reference is %.4g%s\n', ...
                     newValue, refName, reference, refName);
                 isTrackingNeeded = true;
             end
@@ -167,7 +167,7 @@ classdef Tracker < EventSender & EventListener & Savable
                         endRecord = trackable.mHistory{end};
                         newValue = endRecord.value;
                         obj.kcpsReference = newValue;
-                        fprintf('Tracking ended, setting tracker reference as %.2f kcps\n', newValue);
+                        fprintf('Tracking ended, setting tracker reference as %.4g %s\n', newValue, Spcm.signalUnits());
                     otherwise
                         disp('This should not have happenned')
                 end

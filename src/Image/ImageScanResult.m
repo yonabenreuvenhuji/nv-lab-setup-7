@@ -193,8 +193,9 @@ classdef ImageScanResult < Savable & EventSender & EventListener
         
         function [data, label] = getDataForPlotting(obj)
             switch obj.imageType
-                case 1 % Normal kcps image
-                    label = 'kcps';
+                case 1 % Normal intensity image (kcps from a counter, V from the photodiode)
+                    units = Spcm.signalUnits();
+                    label = units;
                     if size(obj.mData, obj.mDimNumber + 1) == 2 % Contrast Image
                         switch obj.mDimNumber
                             case 2
@@ -207,10 +208,10 @@ classdef ImageScanResult < Savable & EventSender & EventListener
                         switch obj.contrastType
                             case 1 % Difference
                                 data = withoutMW - withMW;
-                                label = 'kcps difference';
+                                label = [units ' difference'];
                             case 2 % Ratio
                                 data = withMW./withoutMW;
-                                label = 'kcps ratio';
+                                label = 'ratio (with MW / without MW)';     % dimensionless
                             case 3 % Without MW
                                 data = withoutMW;
                             case 4 % With MW
@@ -376,12 +377,13 @@ classdef ImageScanResult < Savable & EventSender & EventListener
             [~, label] = imageScanResult.getDataForPlotting;
             pos = event_obj.Position;
             
+            % %.4g, not %.1f: a photodiode reads tens of mV, and %.1f printed 0.05 V as "0.1".
             if dim == 1
-                txt = sprintf('%s = %.3f\n%.1f %s', firstAxis, pos(1), pos(2), label);
+                txt = sprintf('%s = %.3f\n%.4g %s', firstAxis, pos(1), pos(2), label);
             else
                 dataIndex = get(event_obj, 'DataIndex');
                 level = data(dataIndex);
-                txt = {sprintf('(%s,%s) = (%.3f, %.3f)\n%.1f %s', ...
+                txt = {sprintf('(%s,%s) = (%.3f, %.3f)\n%.4g %s', ...
                     firstAxis, secondAxis,...
                     pos(1), pos(2), level, label)};
             end
@@ -621,7 +623,8 @@ classdef ImageScanResult < Savable & EventSender & EventListener
             newAxes = copyobj(obj.gAxes, fig);
             if obj.mDimNumber == 2
                 c = colorbar(newAxes);
-                xlabel(c, 'kcps')
+                [~, label] = obj.getDataForPlotting;
+                xlabel(c, label)
             end
             
             try

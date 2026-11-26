@@ -31,6 +31,8 @@ classdef AWGExp2DRabi< ExperimentAWG
             obj.laserInitializationDuration = 10;       % laser initialization in pulsed experiments
             
             obj.mCurrentXAxisParam = ExpParamDoubleVector('Time', [], [], StringHelper.MICROSEC, obj.NAME);
+            % Labels as in the robust fit's figure (ExpPlotStyle / fitStyle)
+            obj.plotXLabel = ExpPlotStyle.X_RABI;
             obj.mCurrentYAxisParam = ExpParamDoubleVector('Amplitude', [], [], 'dBm', obj.NAME);
             obj.signalParam = ExpResultDoubleVector('FL', [], [], 'Normalized', obj.NAME);
         end

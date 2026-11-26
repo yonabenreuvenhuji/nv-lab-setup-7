@@ -787,7 +787,7 @@ classdef StageScanner < EventSender & EventListener & Savable
         function string = getLeftScanLabel(obj)
             switch obj.getScanDimensions
                 case 1
-                    string = 'kcps';
+                    string = Spcm.signalUnits();    % 'V' with the photodiode, 'kcps' with a counter
                 case 2
                     axisLetters = obj.mStageScanParams.getScanAxes;
                     string = sprintf('%s [%s]', axisLetters(2), StringHelper.MICRON); % for example, 'y (?m)'

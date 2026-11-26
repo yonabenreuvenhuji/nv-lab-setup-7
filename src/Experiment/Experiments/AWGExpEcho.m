@@ -139,6 +139,10 @@ classdef AWGExpEcho < ExperimentAWG
             obj.laserInitializationDuration = 10;   % laser initialization in pulsed experiments in us
             
             obj.mCurrentXAxisParam = ExpParamDoubleVector('Time', [], [], StringHelper.MICROSEC, obj.NAME);
+            % Labels as in the robust fit's figure (ExpPlotStyle / fitStyle)
+            obj.plotXLabel = ExpPlotStyle.X_ECHO;     % the x axis is 2*tau*cycles
+            obj.plotYLabel = ExpPlotStyle.Y_NORMALISED;
+            obj.plotYLabelAlternate = ExpPlotStyle.Y_CONTRAST;   % alternateSignal = |0> - |1>
             obj.topParam = ExpParamDoubleVector(StringHelper.TAU, [], [], StringHelper.MICROSEC, obj.NAME);
             obj.signalParam = ExpResultDoubleVector('FL', [], [], 'Normalized', obj.NAME, '|1>');
             obj.signalParam2 = ExpResultDoubleVector('FL', [], [], 'Normalized', obj.NAME, '|0>');
