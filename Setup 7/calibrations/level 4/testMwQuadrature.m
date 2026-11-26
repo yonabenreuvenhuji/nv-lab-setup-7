@@ -20,6 +20,10 @@ function out = testMwQuadrature(opts)
 %   E  strong drive (8 MHz per channel)
 %   F  the opposite phase sign convention          (the zero crossing must not move)
 %   G  pulls: the error bar covers the truth at the rate it claims
+%   H  a 2 ns skew between the channels' envelopes at 6.7 MHz: pi/2 alone must be pulled
+%      off by it, and mwQuadratureCombine(pi/2, 3pi/2) must call it 'skew', ~2 ns
+%   I  no skew, 6.7 MHz, pulses 10% long: the combination must NOT call it skew, and its
+%      balance must be the truth
 %
 % The hyperfine leaves a small known bias at weak drive (+0.03-0.05 dB here; it falls to
 % <0.01 dB at 8 MHz), so the tolerance on the cases is max(3 sigma, 0.08 dB).
@@ -33,7 +37,8 @@ function out = testMwQuadrature(opts)
 
     base = struct('omega1', 1.72, 'epsDb', 0.5, 'phaseErrDeg', 0, 'grad', 0, ...
                   'pulseFactor', 1, 'convention', -1, 'offsets', [-1 0 1], ...
-                  'contrast', 0.03, 'noise', 2e-4, 'nAvg', 20, 'hyperfine', true);
+                  'contrast', 0.03, 'noise', 2e-4, 'nAvg', 20, 'hyperfine', true, ...
+                  'skewNs', 0, 'quadAngle', 0.5);
     cases = {
         'A basic, -32 dBm',              struct()
         'B channelPhase error 5 deg',    struct('phaseErrDeg', 5)
@@ -58,6 +63,34 @@ function out = testMwQuadrature(opts)
         out.pass = out.pass && ok;
     end
 
+    % H: a channel skew. pi/2 alone is pulled off by it; the pair of runs must flag it.
+    sH = merge(base, struct('omega1', 6.7, 'epsDb', 0.5, 'skewNs', 2));
+    [f1, truth, piPair] = simulate(sH);
+    f3 = simulate(merge(sH, struct('quadAngle', 1.5)));
+    q1 = asQuad(f1, 0.5, piPair);  q3 = asQuad(f3, 1.5, piPair);   %#ok<NASGU> used in evalc
+    [~, qc] = evalc('mwQuadratureCombine(q3, q1)');           % either order
+    okH = f1.ok && abs(f1.dStar - truth) > 0.5 && strcmp(qc.verdict, 'skew') && ...
+          abs(qc.skewNsRough - 2) <= 0.6 && isnan(qc.deltaBoth);
+    fprintf('  %-32s truth %+.3f  pi/2 %+.3f, 3pi/2 %+.3f -> %s, ~%.1f ns (true 2)  %s\n', ...
+            'H 2 ns channel skew', truth, f1.dStar, f3.dStar, qc.verdict, qc.skewNsRough, tf(okH));
+    out.pass = out.pass && okH;
+
+    % I: no skew, pulses 10% long: not flagged, and the balance is right.
+    okI = true;
+    for pf = [0.9 1.1]
+        sI = merge(base, struct('omega1', 6.7, 'epsDb', -0.4, 'pulseFactor', pf));
+        [g1, truthI, piI] = simulate(sI);
+        g3 = simulate(merge(sI, struct('quadAngle', 1.5)));
+        r1 = asQuad(g1, 0.5, piI);  r3 = asQuad(g3, 1.5, piI);     %#ok<NASGU> used in evalc
+        [~, rc] = evalc('mwQuadratureCombine(r1, r3)');
+        ok = ~strcmp(rc.verdict, 'skew') && abs(rc.imbalanceDb - truthI) <= max(3 * rc.imbalanceErr, 0.08);
+        fprintf('  %-32s truth %+.3f  pi/2 %+.3f, 3pi/2 %+.3f -> %+.3f +/- %.3f dB (%s)  %s\n', ...
+                sprintf('I no skew, pulses x%.1f', pf), truthI, g1.dStar, g3.dStar, ...
+                rc.imbalanceDb, rc.imbalanceErr, rc.verdict, tf(ok));
+        okI = okI && ok;
+    end
+    out.pass = out.pass && okI;
+
     % G: pulls -- is the quoted error honest?
     pulls = nan(1, opts.nPull);
     for k = 1:opts.nPull
@@ -77,7 +110,7 @@ end
 
 % ======================================================================
 
-function [f, truth] = simulate(s)
+function [f, truth, piPair] = simulate(s)
     cfg = AWGExpMwQuadrature.configList(s.offsets);
     % Fields at the NVs, per ensemble member: channel 1 as set, channel 2 short by epsDb.
     [D, h1, h2, wgt] = ensemble(s);
@@ -85,12 +118,15 @@ function [f, truth] = simulate(s)
     O2 = s.omega1 * 10^(-s.epsDb / 20);
     piPair = 1 / (2 * (O1 + O2));                       % us, the in-phase pair's pi
     T2 = s.pulseFactor * piPair / 2;
-    T1 = s.pulseFactor * sqrt(2) * piPair / 2;
+    T1 = s.pulseFactor * sqrt(2) * piPair / 2 * (s.quadAngle / 0.5);
     phErr = deg2rad(s.phaseErrDeg);
+    sk = s.skewNs * 1e-3;                               % us; > 0: channel 2 arrives late
     P = zeros(numel(cfg), 1);
     for i = 1:numel(cfg)
         segs1 = AWGExpMwQuadrature.segmentsFor(cfg(i), 1, T1, T2);
         segs2 = AWGExpMwQuadrature.segmentsFor(cfg(i), 2, T1, T2);
+        if sk > 0 && ~isempty(segs2); segs2(:, 1:2) = segs2(:, 1:2) + sk; end
+        if sk < 0 && ~isempty(segs1); segs1(:, 1:2) = segs1(:, 1:2) - sk; end
         % The hardware sees channel c's waveform cos(w t - phase - extra) as a drive of
         % amplitude k*Omega_c and phase convention*(phase + extra); channel 2 carries the
         % residual channelPhase error.
@@ -109,6 +145,13 @@ function [f, truth] = simulate(s)
     R = 1 - s.contrast * P + s.noise * randn(numel(cfg), nA);
     f = mwQuadratureFit(cfg, R);
     truth = s.epsDb;
+end
+
+function q = asQuad(f, quadAngle, piPair)
+    % The fields of a calibMwQuadrature output that mwQuadratureCombine reads.
+    q = struct('fit', f, 'dStar', f.dStar, 'dStarErr', f.dStarErr, 'quadAngle', quadAngle, ...
+               'amplitude', -16, 'delta', 0, 'deltaErr', 0, 'phiMax', 0, 'frequency', 2870, ...
+               'piTime', piPair, 'when', '', 'opts', struct('tolDb', 0.1, 'maxErrDb', 0.3));
 end
 
 function A = segAmp(segs, t0, conv, phErr)

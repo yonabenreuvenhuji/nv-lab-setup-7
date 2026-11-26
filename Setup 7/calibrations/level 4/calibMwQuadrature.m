@@ -4,6 +4,7 @@ function out = calibMwQuadrature(opts)
 %   q = calibMwQuadrature(struct('amplitude', -32, 'delta', out.delta, 'phiMax', out.phiMax))
 %   q = calibMwQuadrature                         % everything from the json
 %   q = calibMwQuadrature(struct('replay', q))    % re-analyse, no hardware
+%   q3 = calibMwQuadrature(struct(..., 'quadAngle', 1.5));  qc = mwQuadratureCombine(q, q3)
 %
 % calibMwPair measures each channel ALONE, at the level it will play, and checks with the
 % closure test that the two add as a linear network must. What no single-channel
@@ -25,6 +26,18 @@ function out = calibMwQuadrature(opts)
 % PCBs): slope ~0.056 of the full pi contrast per dB at 1.7 MHz per channel, ~0.11 at
 % 8 MHz; zero within 0.05 dB; unmoved by a 3 degree phase error, the gradient, or +/-10%
 % pulse-time errors.
+%
+% CHANNEL SKEW (2026-11-26). What the simulation above left out: a delay between the two
+% channels' pulse envelopes at the NVs. For that long one channel plays alone at each pulse
+% edge, and Q reads it as an imbalance -- about 0.08 dB per ns per MHz of per-channel drive
+% (0.55 dB per ns at 6.7 MHz), the same for a gap between the pulses or none. Nothing
+% aligns the envelopes (timeDelay = 0; channelPhase only fixes the carrier, modulo 0.35 ns),
+% and 1-2 ns is 20-40 cm of cable. With the quadrature pulse at 3pi/2 (quadAngle 1.5) a
+% real imbalance reads the same and the skew bias changes sign, so the two runs agree
+% (within 0.07 dB, simulated) only when there is no skew. mwQuadratureCombine(q, q3) uses
+% that as the skew test, and gives a balance only when it passes: the mean of the two is
+% NOT a reliable skew correction (how far the bias flips depends on the pulse length).
+% level4.m 4.2b runs both. A single run's verdict below cannot tell skew from imbalance.
 %
 % VERDICT (out.verdict):
 %   'agree'         |d*| <= 3 sigma + tolDb, sigma = both errors combined: the
@@ -48,6 +61,11 @@ function out = calibMwQuadrature(opts)
 %                  warning if the json amplitude differs). quadT2 = piTime/2 (in-phase pi/2),
 %                  quadT1 = sqrt(2)*quadT2 (pi/2 for |Omega1 + i Omega2|). The result is
 %                  insensitive to +/-10% errors here.
+%   quadAngle      the quadrature pulse's rotation in units of pi: 0.5 (default) or 1.5,
+%                  i.e. quadT1 = sqrt(2)*quadT2 or 3*sqrt(2)*quadT2. Same levels either way.
+%                  1.5 has the opposite channel-skew bias (see CHANNEL SKEW). It needs a
+%                  drive well above the 2.16 MHz hyperfine: simulated at 1.7 MHz per channel
+%                  with pulses 10% long it lost the slope entirely; at 3.5 and 6.7 MHz fine.
 %   offsetsDb      channel-2 levels around delta (default [-1 0 1])
 %   repeats        passes per average (default 10000; walk: repeats = passes)
 %   averages       default 20
@@ -65,7 +83,8 @@ function out = calibMwQuadrature(opts)
 
     if ~exist('opts', 'var') || isempty(opts); opts = struct(); end
     opts = withDefaults(opts, struct( ...
-        'amplitude', [], 'delta', [], 'deltaErr', 0, 'phiMax', [], 'piTime', [], 'offsetsDb', [-1 0 1], ...
+        'amplitude', [], 'delta', [], 'deltaErr', 0, 'phiMax', [], 'piTime', [], 'quadAngle', 0.5, ...
+        'offsetsDb', [-1 0 1], ...
         'repeats', 10000, 'averages', 20, 'detectionDuration', [], ...
         'maxDigitizerSegments', 20000, 'useSequenceWalk', true, 'newOrderEveryAverage', true, ...
         'walkWarmupTriggers', 1, 'resyncEveryPass', true, 'tolDb', 0.1, 'maxErrDb', 0.3, ...
@@ -86,6 +105,9 @@ function out = calibMwQuadrature(opts)
         return
     end
 
+    if ~(isscalar(opts.quadAngle) && any(abs(opts.quadAngle - [0.5 1.5]) < 1e-9))
+        error('calibMwQuadrature: quadAngle must be 0.5 (pi/2) or 1.5 (3pi/2).');
+    end
     if isempty(opts.jsonLocation); opts.jsonLocation = setup7Paths().json; end
     J = jsondecode(fileread(opts.jsonLocation));
     amp   = pickVal(opts.amplitude, J, 'amplitude', [], 1);
@@ -108,13 +130,14 @@ function out = calibMwQuadrature(opts)
         end
     end
     T2 = round(piT / 2 * 1e4) / 1e4;
-    T1 = round(sqrt(2) * T2 * 1e4) / 1e4;
+    T1 = round(sqrt(2) * T2 * (opts.quadAngle / 0.5) * 1e4) / 1e4;
+    angleName = ternary(opts.quadAngle > 1, '3pi/2', 'pi/2');
 
     fprintf('\n=== calibMwQuadrature: the balance with BOTH channels playing ===\n');
     fprintf(['channel 1 %g dBm, channel 2 %g %+.3f dB = %.3f dBm, channel 2 phase %.2f deg\n' ...
-             'quadrature pulse %.1f ns, in-phase pi/2 %.1f ns (pair pi %.1f ns); channel-2 ' ...
-             'offsets %s dB\n'], amp, amp, delta, amp + delta, phi, 1e3*T1, 1e3*T2, 1e3*piT, ...
-            mat2str(opts.offsetsDb));
+             'quadrature pulse %.1f ns (%s), in-phase pi/2 %.1f ns (pair pi %.1f ns); channel-2 ' ...
+             'offsets %s dB\n'], amp, amp, delta, amp + delta, phi, 1e3*T1, angleName, 1e3*T2, ...
+            1e3*piT, mat2str(opts.offsetsDb));
 
     b = AWGExpMwQuadrature;
     b.loadJsonParams('all', opts.jsonLocation);
@@ -160,7 +183,8 @@ function out = calibMwQuadrature(opts)
     raw = pullRaw(b);
     out = struct('opts', opts, 'raw', raw, 'amplitude', amp, 'delta', delta, ...
                  'deltaErr', nanToZero(opts.deltaErr), 'phiMax', phi, ...
-                 'piTime', piT, 'quadT1', T1, 'quadT2', T2, 'configs', b.configs, ...
+                 'piTime', piT, 'quadAngle', opts.quadAngle, 'quadT1', T1, 'quadT2', T2, ...
+                 'configs', b.configs, ...
                  'frequency', b.frequency, 'when', datestr(now, 31)); %#ok<TNOW1,DATST>
     out = analyse(out);
     report(out);
@@ -268,6 +292,14 @@ function report(out)
                     ternary(isempty(f.why), sprintf('d* error %.2f dB > maxErrDb %.2f', ...
                     out.dStarErr, out.opts.maxErrDb), f.why));
     end
+    if isfield(out, 'quadAngle') && out.quadAngle > 1
+        fprintf(['  NOTE 3pi/2: a channel skew biases this the OPPOSITE way to pi/2. Compare the ' ...
+                 'two:\n  qc = mwQuadratureCombine(q, q3).\n']);
+    else
+        fprintf(['  NOTE a timing skew between the channels'' pulses reads as an imbalance here ' ...
+                 '(~0.08 dB\n  per ns per MHz of drive). A 3pi/2 run (quadAngle 1.5) and ' ...
+                 'mwQuadratureCombine tell the two apart.\n']);
+    end
     fprintf('==========================================================\n');
 end
 
@@ -286,7 +318,9 @@ function drawIt(out)
     grid on;
     xlabel(sprintf('channel 2 offset from %+.3f dB', out.delta));
     ylabel('Q / contrast');
-    title(sprintf('both on: delta = %+.3f +/- %.3f dB  (%s)', out.deltaBoth, out.deltaBothErr, ...
+    ang = 'pi/2';
+    if isfield(out, 'quadAngle') && out.quadAngle > 1; ang = '3pi/2'; end
+    title(sprintf('%s: delta = %+.3f +/- %.3f dB  (%s)', ang, out.deltaBoth, out.deltaBothErr, ...
                   out.verdict));
 end
 
