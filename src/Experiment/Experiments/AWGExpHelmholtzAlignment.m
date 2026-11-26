@@ -46,6 +46,7 @@ classdef AWGExpHelmholtzAlignment < AWGExpESR
             obj.averages = 1;
             obj.repeats = 100;
             obj.widthPlot = 0;
+            obj.useSequenceWalk = false;    % walk does not support mirrorSweepAround
         end
     end
     

@@ -111,7 +111,7 @@ function out = calibAmplitudeDiff(opts)
 %   repeats, averages, rabiDetectionMHz, nFreq, minContrast, maxFErrFrac, isTracking,
 %   plotIt, jsonLocation      as calibMwPair
 %   newOrderEveryAverage  walk-mode Rabi runs: a new random tau order before every average
-%                  (true/false). Default [] = AWGExpRabi's own setting (false). Costs one
+%                  (true/false). Default [] = AWGExpRabi's own setting (true). Costs one
 %                  sequence upload + arm per average.
 
     if ~exist('opts', 'var'); opts = struct(); end

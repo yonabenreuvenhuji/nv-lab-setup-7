@@ -216,6 +216,7 @@ function b = makeExp(opts, taus, reps, avgs)
         otherwise;             b = AWGExpRabi;
     end
     b.loadJsonParams('all', opts.jsonLocation);
+    if isprop(b, 'useSequenceWalk'); b.useSequenceWalk = false; end   % times the classic path
     b.nChannels = opts.nChannels;                     % BEFORE amplitude, always
     if opts.nChannels == 2
         b.amplitude = opts.amplitude + [0 0];

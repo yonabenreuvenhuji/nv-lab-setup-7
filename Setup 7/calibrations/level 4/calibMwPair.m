@@ -4,6 +4,7 @@ function out = calibMwPair(opts)
 %   out = calibMwPair
 %   out = calibMwPair(struct('amplitude', -16))
 %   out = calibMwPair(struct('phases', 0:30:330, 'nBalanceReps', 3))
+%   calibMwPair(struct('replay', out))     % redraw an earlier run's figure, no hardware
 %
 % LEVEL 4. Run after calibB1Rabi, with the coils ON and at the field it chose, so the NVs
 % sit at the antenna's response peak and the drive is as strong as this setup gets.
@@ -169,10 +170,12 @@ function out = calibMwPair(opts)
 %   tau, repeats, averages, useSequenceWalk, passesPerRun, walkWarmupTriggers,
 %   resyncEveryPass, rabiDetectionMHz, nFreq, minContrast, maxFErrFrac
 %   newOrderEveryAverage  walk-mode Rabi runs: a new random tau order before every average
-%                  (true/false). Default [] = AWGExpRabi's own setting (false). Costs one
+%                  (true/false). Default [] = AWGExpRabi's own setting (true). Costs one
 %                  sequence upload + arm per average.
 %
 %   plotIt, isTracking, jsonLocation
+%   replay         an earlier output: redraws its figure and returns it unchanged. No
+%                  hardware, no re-analysis; every other option is ignored.
 %
 % Changes no calibration file itself. level4.m cell 4.3 writes amplitudeDiff, channelPhase and
 % timeDelay = 0 into expProperties.json with expPropsWrite (only when out.ok).
@@ -191,8 +194,22 @@ function out = calibMwPair(opts)
         'newOrderEveryAverage', [], ...
         'rabiDetectionMHz', 0.3, 'nFreq', 1, 'minContrast', 0.005, 'maxFErrFrac', 0.05, ...
         'plotIt', true, 'isTracking', 0, ...
-        'jsonLocation', ''), ...
+        'jsonLocation', '', 'replay', []), ...
         'calibMwPair');
+
+    if ~isempty(opts.replay)
+        out = opts.replay;
+        if ~(isstruct(out) && isfield(out, 'phaseScan') && isfield(out, 'opts'))
+            error('calibMwPair: replay must be an earlier calibMwPair output.');
+        end
+        fprintf('\n=== calibMwPair: REPLAY, no hardware (figure only) ===\n');
+        if isempty(out.phaseScan)
+            fprintf('That run has no phase scan (doPhase false), so there is no figure.\n');
+        else
+            drawIt(out, out.opts);
+        end
+        return
+    end
 
     % ---- where the calibration lives ------------------------------------
     % Resolved by setup7Paths rather than written down here. Twelve files used to carry

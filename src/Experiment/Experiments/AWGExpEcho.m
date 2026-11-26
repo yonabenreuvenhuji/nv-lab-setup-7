@@ -16,7 +16,7 @@ classdef AWGExpEcho < ExperimentAWG
         
         doubleMeasurement   % logical
 
-        useSequenceWalk = false;    % logical. Arm ONCE and let the sequencer advance one tau
+        useSequenceWalk = true;     % logical. (default) Arm ONCE and let the sequencer advance one tau
                                     % per pulse-generator repeat, instead of MATLAB assigning
                                     % a new sequence at every point.
                                     %
@@ -69,7 +69,7 @@ classdef AWGExpEcho < ExperimentAWG
                                     % few extra re-arms for a responsive experiment.
         walkOrder = [];             % the order the blocks were built in, so the data can be
                                     % put back in tau order. Set by buildWalkSequence.
-        newOrderEveryAverage = false;   % logical. WALK MODE ONLY. Draw a new random tau
+        newOrderEveryAverage = true;    % logical. WALK MODE ONLY. Draw a new random tau
                                     % order before every average and re-upload ONLY the
                                     % sequence -- the waveforms stay on the AWG. Costs one
                                     % sequence upload + arm per average, printed as it happens.

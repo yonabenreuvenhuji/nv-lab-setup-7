@@ -119,6 +119,7 @@ function out = rabiStageTimer(opts)
     t = tic;
     b.loadJsonParams('all', opts.jsonLocation);
     S = add(S, 'loadJsonParams', toc(t));
+    if isprop(b, 'useSequenceWalk'); b.useSequenceWalk = false; end   % times the classic path
 
     % ---- setters, individually -------------------------------------------
     t = tic; b.nChannels = opts.nChannels;              S = add(S, 'set nChannels', toc(t));

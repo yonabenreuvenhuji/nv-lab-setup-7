@@ -15,7 +15,7 @@ classdef AWGExpRamsey < ExperimentAWG
         doubleMeasurement   % logical
 
         % ---- sequence walk: the fast path -------------------------------------
-        useSequenceWalk = false;    % logical. Arm ONCE and let the sequencer advance one tau
+        useSequenceWalk = true;     % logical. (default) Arm ONCE and let the sequencer advance one tau
                                     % per pg repeat, instead of arm-run-read per tau.
                                     %
                                     % WHAT IT REMOVES, measured by ramseyStageTimer on this
@@ -63,7 +63,7 @@ classdef AWGExpRamsey < ExperimentAWG
                                     % real ceiling in two or three runs.
         walkOrder = [];             % the order the blocks were built in, so the data can be
                                     % put back into tau order.
-        newOrderEveryAverage = false;   % logical. WALK MODE ONLY. Draw a new random tau
+        newOrderEveryAverage = true;    % logical. WALK MODE ONLY. Draw a new random tau
                                     % order before every average and re-upload ONLY the
                                     % sequence -- the waveforms stay on the AWG. Costs one
                                     % sequence upload + arm per average, printed as it happens.

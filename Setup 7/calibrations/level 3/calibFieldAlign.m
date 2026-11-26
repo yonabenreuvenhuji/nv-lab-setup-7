@@ -105,7 +105,7 @@ function out = calibFieldAlign(opts)
 %   isTracking           (default 0)
 %   newOrderEveryAverage walk mode: a new random frequency order before every average
 %                        (true/false), passed down to calibFieldSurvey for the locate sweep
-%                        AND every scan point. Default [] = AWGExpESR's own setting (false
+%                        AND every scan point. Default [] = AWGExpESR's own setting (true
 %                        on a fresh object). Costs one sequence upload per average.
 %   freshExperiment      construct a NEW AWGExpESR for every measurement (default true).
 %                        This is what stops the "parameters have changed" dialog: the

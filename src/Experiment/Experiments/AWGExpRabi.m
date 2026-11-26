@@ -24,7 +24,7 @@ classdef AWGExpRabi < ExperimentAWG
         % measured 249 s of a 265 s run, at about 173 ms per SCPI command. Walk mode calls
         % it TWICE, once per channel, with the whole step list. That is the same change
         % that took the ESR load from 130 s to 6 s.
-        useSequenceWalk = false;    % logical. The fast path. Requires a FIXED MW gate --
+        useSequenceWalk = true;     % logical. The fast path (default). Requires a FIXED MW gate --
                                     % see prepare, and read the note there before using it
                                     % on data you care about.
         passesPerRun = [];          % full passes over the tau list per pg.run.
@@ -79,7 +79,7 @@ classdef AWGExpRabi < ExperimentAWG
                                     % randperm the classic path does per average has to
                                     % move into the sequence itself or slow drift becomes
                                     % a trend in tau.
-        newOrderEveryAverage = false;   % logical. WALK MODE ONLY. Draw a new random tau
+        newOrderEveryAverage = true;    % logical. WALK MODE ONLY. Draw a new random tau
                                     % order before every average and re-upload ONLY the
                                     % sequence -- the waveforms stay on the AWG. Costs one
                                     % sequence upload + arm per average, printed as it happens.
