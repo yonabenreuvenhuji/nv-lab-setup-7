@@ -119,7 +119,7 @@ classdef AWGExpESRPulsed < ExperimentAWG
                                     %   classic: a NEW order every average.
                                     %   walk: ONE order per upload, reused by every pass and
                                     %     average, unless newOrderEveryAverage is on.
-        useSequenceWalk = false;    % logical. The fast path, as in AWGExpESR. ONE sequence
+        useSequenceWalk = true;     % logical. The fast path (default), as in AWGExpESR. ONE sequence
                                     % per channel holds every frequency as a block
                                     % [zero pad (waits for trigger), pulse], the AWG is armed
                                     % once, and each trigger plays the next block. One pg.run
@@ -130,7 +130,7 @@ classdef AWGExpESRPulsed < ExperimentAWG
                                     % does the same average in about one pg.run.
                                     % Check it once against classic: esrPulsedVsCwCompare
                                     % does that (validateWalk).
-        newOrderEveryAverage = false; % logical. WALK ONLY. Draw a new random order before
+        newOrderEveryAverage = true;  % logical. WALK ONLY. Draw a new random order before
                                     % every average and re-upload ONLY the sequence (the
                                     % waveforms stay). Costs one sequence upload + arm per
                                     % average, printed. Effects tied to position in the pass

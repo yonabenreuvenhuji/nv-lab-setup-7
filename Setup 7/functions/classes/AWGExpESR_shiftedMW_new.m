@@ -221,7 +221,7 @@ classdef AWGExpESR_shiftedMW_new < ExperimentAWG
                     %     For a new order every average in walk mode, see
                     %     newOrderEveryAverage.
 
-        newOrderEveryAverage = false;   % logical. WALK MODE ONLY. Draw a new random order
+        newOrderEveryAverage = true;    % logical. WALK MODE ONLY. Draw a new random order
                     % before every average and re-upload ONLY the sequence (the waveforms
                     % stay on the instrument). Each average then pays one sequence upload
                     % + arm, printed as it happens -- that is the same cost as the first

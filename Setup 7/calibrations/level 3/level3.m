@@ -24,35 +24,8 @@
 %  where <results> is setup7Paths().folder -- the newest dated calibration folder.
 %  ========================================================================
 
-%% 3.0  the CW-ESR window  --  once per session, before any hardware
-%
-% Every ESR in this level goes through calibFieldSurvey, and all of them used to run at a
-% 10 us window. That was wrong twice over:
-%
-%   TOO SHORT FOR THE PHYSICS. tau_pol is 13.6 us on this setup, so a 10 us window is less
-%   than ONE polarisation time. Laser and microwave both start at the top of every CW
-%   window, so its first ~tau_pol carries less than steady-state contrast -- at 10 us the
-%   dip comes back at roughly a third of its available depth. That is a 3x SNR penalty on
-%   every line centre in this level, for nothing.
-%
-%   AND POSSIBLY ILLEGAL. In CW ESR the AWG loops a burst for detectionDuration +
-%   laserInitializationDuration while one repeat is 2*(detectionDuration +
-%   delayBetweenDetections). If the burst is longer, triggers are dropped, those repeats get
-%   no microwave, and the spectrum comes back as a COMB -- alternate points at ratio 1 with
-%   the dip only on the others. It does not error and it does not warn.
-%
-% esrWindowPick settles both. calibFieldSurvey now also resolves the window through it when
-% detectionMHz is left empty, and clamps laserInitializationDuration either way, so a bare
-% call is safe -- but computing it here once means the number is visible in the log and the
-% same value is used by 3.2, 3.3 and 3.4.
-%
-% tauPol is read from expProperties.json, where level 2 (cell 2.3) writes it, so this cell no
-% longer needs level 2's r in the workspace -- which also removes the old trap of 3.4
-% reassigning r and breaking a re-run of this cell. calibFieldSurvey calls esrWindowPick the
-% same way when detectionMHz is empty, so it now gets the transient floor too; before, it
-% never passed tauPol and the floor was silently skipped.
-cw = esrWindowPick(struct('jsonLocation', setup7Paths().json));
-esrWindow = cw.detectionDuration;
+% The CW-ESR window is set by AWGExpESR.loadJsonParams (esrWindowPick, printed on every
+% ESR), so no cell here passes detectionMHz. To see the derivation: esrWindowPick
 
 
 %% 3.1  offline grader  --  no hardware, run before anything else
@@ -70,12 +43,7 @@ testFieldPipeline
 % lines by hand -- see the header note above for why pairing does not work.
 h = getObjByName('Helmholtz');  h.control('auto');
 
-% detectionMHz was ABSENT here, so this cell ran at the old 10 us default -- see 3.0. That
-% is the single change most likely to fix a survey whose line centres look off: the dip was
-% a third as deep as it should have been, so every centre had three times the error bar it
-% needed, and a shallow blend is exactly where the multi-line fit gives up first.
-sv = calibFieldSurvey(struct('freqs', 2795:0.5:2935, 'amplitude', -35, ...
-                             'detectionMHz', esrWindow, 'repeats', 100));
+sv = calibFieldSurvey(struct('freqs', 2795:0.5:2935, 'amplitude', -35, 'repeats', 100));
 
 % To re-fit the SAME data with different fit options, pass it back in rather than
 % re-measuring. 'replay' also accepts an experiment object.
@@ -94,10 +62,7 @@ a = calibFieldAlign(struct('dryRun', true, ...
     'amplitude',   -35, ...
     'scanFreqs',   2800 : 0.25 : 2930, ...
     'averages',    1, ...
-    'repeats',     100, ...
-    'detectionMHz', esrWindow));    % from 3.0. Was 50, described as "the CW window from
-                                    % level 2" -- that came from calibCwWindow, which is
-                                    % gone, and 50 us is now below the trigger limit anyway.
+    'repeats',     100));
 
 %% 3.3b  the real alignment scan
 %
@@ -115,9 +80,7 @@ a = calibFieldAlign(struct(...
     'nPoints',              13, ... 
     'amplitude',            -30, ...
     'scanFreqs',            2760:1:2980, ...
-    'detectionMHz',         esrWindow, ...
-    'repeats',              100, ...
-    'newOrderEveryAverage', true));
+    'repeats',              100));
 
 %% 3.3c  write the alignment
 h = getObjByName('Helmholtz');
@@ -130,9 +93,6 @@ fprintf('field direction saved: theta %.4f, phi %.4f deg\n', a.theta, a.phi);
 %
 % Five tests: recover a known resonator, refuse when the peak is not in the data, and quote
 % error bars that cover the truth as often as they claim to. Expect ALL TESTS PASS.
-%
-% Named tb, not r: r is level 2's calibDetectionWindow result and 3.0 needs r.tauPol out of
-% it. Overwriting it here worked only because 3.0 had already run.
 tb = testB1RabiChain;
 
 
@@ -156,10 +116,7 @@ out = calibB1Rabi(struct( ...
     'esrFreqs',             2720:3:3020, ...      % must reach D + gamma*|B| at the TOP field
     'esrAmplitude',         -25, ...
     'esrRepeats',           50, ...
-    'esrAverages',          3, ...
-    'esrDetectionMHz',      esrWindow, ...
-    'esrNewOrderEveryAverage', true, ...    % ESR steps: new frequency order every average
-    'newOrderEveryAverage',    true));      % Rabi runs: new tau order every average
+    'esrAverages',          3));
 %% 3.4c  write the field magnitude
 h = getObjByName('Helmholtz');
 h.setBrho(out.rhoOptimum);

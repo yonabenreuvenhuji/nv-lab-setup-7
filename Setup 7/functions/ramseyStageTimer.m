@@ -181,6 +181,7 @@ function seconds = runOne(nTau, repeats, opts, tag)
     fprintf('\n--- %s: %d taus, %d repeats ---\n', tag, nTau, repeats);
     r = AWGExpRamsey;
     r.loadJsonParams('all', opts.jsonLocation);
+    r.useSequenceWalk = false;      % measures the classic per-tau cost
     r.nChannels = 2;
     r.amplitude = opts.amplitude + [0 0];
     r.frequency = r.frequency + opts.detuneMHz;

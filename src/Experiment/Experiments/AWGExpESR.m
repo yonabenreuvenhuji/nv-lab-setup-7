@@ -50,7 +50,7 @@ classdef AWGExpESR < ExperimentAWG
                     %
                     % Not yet supported together with mirrorSweepAround.
 
-        useSequenceWalk = false;    % logical. The fast acquisition mode.
+        useSequenceWalk = true;     % logical. The fast acquisition mode (default).
                     %
                     % Measured cause of the slow sweep: assignSequence stops the
                     % AWG, and re-arming after an ASSET CHANGE costs ~499 ms,
@@ -204,7 +204,7 @@ classdef AWGExpESR < ExperimentAWG
                     %     For a new order every average in walk mode, see
                     %     newOrderEveryAverage.
 
-        newOrderEveryAverage = false;   % logical. WALK MODE ONLY. Draw a new random order
+        newOrderEveryAverage = true;    % logical. WALK MODE ONLY. Draw a new random order
                     % before every average and re-upload ONLY the sequence (the waveforms
                     % stay on the instrument). Each average then pays one sequence upload
                     % + arm, printed as it happens -- that is the same cost as the first
@@ -422,6 +422,45 @@ classdef AWGExpESR < ExperimentAWG
             obj.signalParam = ExpResultDoubleVector('FL', [], [], 'Normalized', obj.NAME, 'Normal');
             obj.signalParam2 = ExpResultDoubleVector('FL', [], [], 'Normalized', obj.NAME, 'Mirrored');
         end
+
+        function loadJsonParams(obj, params, jsonLocation)
+            % As Experiment.loadJsonParams, then replaces the json's detectionDuration and
+            % laserInitializationDuration -- the PULSED values -- with the CW-ESR window.
+            % Set detectionDuration after this call to override it; prepare re-checks
+            % laserInitializationDuration against whatever window is in force.
+            if ~exist('params', 'var'); params = 'all'; end
+            if ~exist('jsonLocation', 'var'); jsonLocation = ''; end
+            loadJsonParams@ExperimentAWG(obj, params, jsonLocation);
+            if ~iscell(params); params = {params}; end
+            if any(ismember(lower(params), lower({'all', 'detectionDuration', ...
+                    'referenceDetectionDuration', 'laserInitializationDuration'})))
+                obj.setCwWindow(jsonLocation);
+            end
+        end
+
+        function setCwWindow(obj, jsonLocation)
+            % CW ESR window from esrWindowPick (10*tauPol, or the AWG trigger limit + 50%),
+            % and a laserInitializationDuration short enough that the AWG burst
+            % (detection + laserInit) fits inside one repeat. Break that and triggers are
+            % dropped: alternate points come back at ratio 1, with no error.
+            if ~exist('jsonLocation', 'var'); jsonLocation = ''; end
+            try
+                w = esrWindowPick(struct('quiet', true, 'jsonLocation', jsonLocation, ...
+                    'laserInit', obj.laserInitializationDuration, ...
+                    'delayBetweenDetections', obj.delayBetweenDetections, ...
+                    'frequency', mean(obj.frequency))).detectionDuration;
+            catch err
+                w = 150;
+                obj.sendWarning(sprintf('esrWindowPick failed (%s). CW window set to %g us.', ...
+                    err.message, w));
+            end
+            obj.detectionDuration          = w;
+            obj.referenceDetectionDuration = w;
+            obj.laserInitializationDuration = esrSafeInit(w, obj.delayBetweenDetections, ...
+                obj.laserInitializationDuration);
+            fprintf('CW ESR window: detectionDuration %g us, laserInitializationDuration %g us\n', ...
+                w, obj.laserInitializationDuration);
+        end
     end
     
     %% Setters
@@ -616,6 +655,14 @@ end
             obj.runsPerPerform = (1 + ~obj.isSingleMeasurement);
             obj.freqMirrored = obj.mirrorFrequency;
             MWChannel = obj.MWChannel;
+
+            % The AWG burst (detection + laserInit) must fit in one repeat. A window set
+            % after loadJsonParams can break that, so cap laserInit here (no-op when safe).
+            initSafe = esrSafeInit(obj.detectionDuration, obj.delayBetweenDetections, ...
+                                   obj.laserInitializationDuration);
+            if initSafe < obj.laserInitializationDuration
+                obj.laserInitializationDuration = initSafe;
+            end
 
             %%% Create
             if obj.seperatedTrigger                         % AWG trigger

@@ -112,9 +112,11 @@ away all the photons. Neither raises an error.
 
 Writes (cell 2.3, `expPropsWrite`): `lastDelay`, `detectionDuration`,
 `referenceDetectionDuration`, `laserInitializationDuration`, `tauPol`. `tauPol` is not an experiment property, so
-`loadJsonParams` skips it; it is in the json so that `esrWindowPick` (run script, level 3,
-`calibFieldSurvey`) reads one measured number instead of a hand-typed copy. The CW window is
-**not** written: it would collide with the pulsed `detectionDuration`.
+`loadJsonParams` skips it; it is in the json so that `esrWindowPick` reads one measured
+number instead of a hand-typed copy. The CW window is **not** written: it would collide with
+the pulsed `detectionDuration`. Instead `AWGExpESR.loadJsonParams` replaces the json's pulsed
+window with `esrWindowPick`'s CW one on every load, and `prepare` caps
+`laserInitializationDuration` with `esrSafeInit`, so no script or calibration sets either.
 
 ## Level 3 — the field, and the operating frequency
 

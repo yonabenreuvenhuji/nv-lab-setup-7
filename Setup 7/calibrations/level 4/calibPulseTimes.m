@@ -105,7 +105,7 @@ function out = calibPulseTimes(opts)
 %   newOrderEveryAverage  a new random tau order before every average (true/false). Only the
 %                  COARSE pass walks, so only it is affected; the fine pass is classic and
 %                  already draws a new order every average. Default [] = AWGExpRabi's own
-%                  setting (false).
+%                  setting (true).
 %   stableSigma    how many sigma of half-to-half difference counts as significant (default 3)
 %   stableTolFrac  and how large a fraction of pi counts as MATTERING (default 0.02). Both
 %                  have to be exceeded before out.stable goes false. See THE SELF-CHECK.
@@ -205,6 +205,7 @@ function out = calibPulseTimes(opts)
             nRearm, 0.6*nRearm, numel(tauList)*opts.repeats*opts.averages*55e-6);
 
     b = newRabi(amp, frq, det, aDiff, cPh, opts, J);
+    b.useSequenceWalk = false;      % the fine pass is classic on purpose
     b.repeats  = opts.repeats;
     b.averages = opts.averages;
     b.tau      = tauList;

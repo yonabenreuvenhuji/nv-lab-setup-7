@@ -155,7 +155,7 @@ function out = calibB1Rabi(opts)
 %   useSequenceWalk, passesPerRun, walkWarmupTriggers, resyncEveryPass
 %                  (defaults true, [] = auto, 1, true)
 %   newOrderEveryAverage  Rabi runs (walk mode only): a new random tau order before every
-%                  average (true/false). Default [] = AWGExpRabi's own setting (false).
+%                  average (true/false). Default [] = AWGExpRabi's own setting (true).
 %                  Costs one sequence upload + arm per average. See
 %                  AWGExpRabi.newOrderEveryAverage.
 %   rabiDetectionMHz          detection window, us (default 0.3, calibDetectionWindow's)
@@ -229,7 +229,7 @@ function out = calibB1Rabi(opts)
 %   fineNarrowEsr  narrow window on the fine pass (default true)
 %   esrNewOrderEveryAverage  the ESR steps: a new random frequency order before every
 %                  average (true/false), passed down to calibFieldSurvey as its
-%                  newOrderEveryAverage. Default [] = AWGExpESR's own setting (false).
+%                  newOrderEveryAverage. Default [] = AWGExpESR's own setting (true).
 %                  Separate from newOrderEveryAverage, which is the Rabi runs'.
 %   baselineOrder, freshExperiment, minFwhm, edgeGuard      as calibB1Peak
 %

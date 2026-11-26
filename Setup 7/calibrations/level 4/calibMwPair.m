@@ -170,7 +170,7 @@ function out = calibMwPair(opts)
 %   tau, repeats, averages, useSequenceWalk, passesPerRun, walkWarmupTriggers,
 %   resyncEveryPass, rabiDetectionMHz, nFreq, minContrast, maxFErrFrac
 %   newOrderEveryAverage  walk-mode Rabi runs: a new random tau order before every average
-%                  (true/false). Default [] = AWGExpRabi's own setting (false). Costs one
+%                  (true/false). Default [] = AWGExpRabi's own setting (true). Costs one
 %                  sequence upload + arm per average.
 %
 %   plotIt, isTracking, jsonLocation

@@ -112,22 +112,15 @@ function out = calibFieldSurvey(opts)
 %   repeats      (default 50)
 %   averages     (default 3 -- NOT 1. With a single average sterr is not a standard
 %                error at all, which is how a 483-sigma dip got reported)
-%   detectionMHz CW detection and reference window, us. Default [] = resolve it through
-%                esrWindowPick, which is what you want. It was 10, justified in this
-%                comment as "already many polarisation times" -- and that was simply
-%                wrong: tau_pol is 13.6 us on this setup, so a 10 us window is less than
-%                ONE polarisation time. Laser and microwave both start at the top of every
-%                CW window, so its first ~tau_pol carries less than steady-state contrast;
-%                at 10 us the dip came back about a third of its available depth. The
-%                floor is ~10*tau_pol, and there is a hard AWG-trigger limit underneath it
-%                as well -- see esrWindowPick.
+%   detectionMHz CW detection and reference window, us. Default [] = AWGExpESR's own
+%                (esrWindowPick, set by its loadJsonParams), which is what you want.
 %   jsonLocation expProperties.json, loaded with loadJsonParams('all', ...) before
 %                anything else is set
 %   isTracking   (default 0)
 %   freshExperiment  construct a NEW AWGExpESR for every run (default true). See makeExp
 %                -- this is what stops the "parameters have changed" dialog appearing.
 %   newOrderEveryAverage  walk mode: draw a new random frequency order before every
-%                average (true/false). Default [] = leave AWGExpESR's own setting (false
+%                average (true/false). Default [] = leave AWGExpESR's own setting (true
 %                on a fresh object unless the json sets it). Each average then pays one
 %                sequence upload; see AWGExpESR.newOrderEveryAverage.
 %   targetMHz    the frequency you want a line moved to. Default [] = the RESONANCE this
@@ -884,49 +877,15 @@ function a = makeExp(opts)
     a.repeats    = opts.repeats;
     if ~isempty(opts.amplitude);  a.amplitude  = opts.amplitude;  end
     a.isTracking = opts.isTracking;
-    % ---- the CW-ESR window: ALWAYS set, ALWAYS clamped ----
-    % This used to be "if ~isempty(opts.detectionMHz)", which had two failure modes and both
-    % were silent. With the option EMPTY nothing was set, so the window stayed at whatever
-    % loadJsonParams had just copied in -- the few-microsecond PULSED value, which is far
-    % below the transient floor and throws away most of the dip. And the clamp below sat
-    % inside the same branch, so the empty case skipped it too and the json's pulsed
-    % laserInitializationDuration went straight through.
-    %
-    % Empty now means "resolve it", not "leave it alone".
-    det = opts.detectionMHz;
-    if isempty(det)
-        try
-            det = esrWindowPick(struct('quiet', true, 'jsonLocation', opts.jsonLocation, ...
-                                       'frequency', mean(opts.freqs))).detectionDuration;
-        catch
-            det = 150;      % a working CW window on this setup if the arithmetic is unavailable
-        end
+    % CW window: AWGExpESR.loadJsonParams sets it (esrWindowPick) and prepare keeps
+    % laserInitializationDuration short enough for it. detectionMHz overrides the window.
+    if ~isempty(opts.detectionMHz)
+        a.detectionDuration          = opts.detectionMHz;
+        a.referenceDetectionDuration = opts.detectionMHz;
+    elseif isempty(opts.jsonLocation)
+        a.setCwWindow();
     end
-    a.detectionDuration          = det;
-    a.referenceDetectionDuration = det;
-
-    % ---- the CW-ESR trigger constraint ----
-    % loadJsonParams has just copied laserInitializationDuration in from
-    % expProperties.json, where it is a real initialisation for the PULSED experiments and
-    % runs to tens of microseconds. In CW ESR it is not an initialisation at all -- there is
-    % no init event and the green laser is on throughout -- it only sets how much extra
-    % microwave the AWG plays past the window. Leave the json value in place with a short
-    % window and the burst becomes longer than one repeat, so triggers are dropped, those
-    % repeats get no microwave, and the spectrum comes back as a COMB: alternate points at
-    % exactly ratio 1 with the dip only on the others. It does not error, it does not warn,
-    % and it will happily be fitted.
-    %
-    % This is the one place level 3 needs it: calibFieldAlign and calibB1Rabi both run their
-    % ESR by calling this function, so neither needs its own copy.
-    a.laserInitializationDuration = esrSafeInit(a.detectionDuration, ...
-                                                a.delayBetweenDetections, ...
-                                                a.laserInitializationDuration);
-    a.useSequenceWalk = true;     % the fast, outlier-free path
-    a.useSequenceJump = false;    % never: produces scrambled frequencies
-    a.useFgen         = false;    % never yet: ~4 s of settling per point makes it slower
-    a.driveMWSwitches = true;     % normal operation; false is a switch diagnostic
-    % Optional, passed down from the caller: a new random order every average (walk mode).
-    % Empty leaves the object's own value.
+    % Empty leaves the object's own value (true).
     if ~isempty(opts.newOrderEveryAverage)
         a.newOrderEveryAverage = logical(opts.newOrderEveryAverage);
     end
