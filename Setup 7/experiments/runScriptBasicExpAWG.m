@@ -44,13 +44,28 @@ h.control('auto');
 
 p = AWGExpESRPulsed;
 p.loadJsonParams('all', jsonLocation);
-p.frequency       = 2817 + (-7:0.2:7);
-p.repeats         = 50;
-p.averages        = 3;
+p.frequency       = 2762 + (-10:0.1:10);
+p.repeats         = 300;
+p.averages        = 4;
 p.amplitude       = -44;
-p.mwPulseDuration = 0.556;
+p.mwPulseDuration = 0.572;
 p.run;
 o = esrFitRobust(struct('exp', p));     % also tests for the 14N triplet (o.hyperfine)
+%% 
+h.control('auto');
+
+a = AWGExpESR;
+a.loadJsonParams('all', jsonLocation);
+a.frequency       = 2762 + (-10:0.1:10);
+a.repeats         = 300;
+a.averages        = 4;
+a.amplitude       = -44;
+a.isTracking = 0;
+
+tId = tic; a.run;
+fprintf('ESR: %.1f s, %d SCPI commands\n', toc(tId), a.AWG.commandCount);
+o = esrFitRobust(struct('exp', a));     % lines, resonator dip, and the field: o.B, o.tiltDeg, o.D
+
 
 
 %% Pulsed vs CW ESR comparison
