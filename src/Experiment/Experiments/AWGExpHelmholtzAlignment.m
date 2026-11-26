@@ -231,7 +231,7 @@ classdef AWGExpHelmholtzAlignment < AWGExpESR
             set(gcf,'CurrentAxes',obj.figHandle.sp3)
             plot(obj.scan_values(1:index),obj.helm_ESR_FL(1:index,:))
             xlabel('scan values')
-            ylabel(sprintf('background fluorescence [%s]', Spcm.signalUnits()))   % was 'kcps': wrong with the photodiode            
+            ylabel(sprintf('background fluorescence (%s)', Spcm.signalUnits()))   % was 'kcps': wrong with the photodiode            
             axis tight
             
             if sum(obj.signal(:)) ~= 0

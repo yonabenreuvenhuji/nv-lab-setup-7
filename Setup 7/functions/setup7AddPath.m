@@ -6,7 +6,7 @@ function added = setup7AddPath(opts)
 %   setup7AddPath(struct('check', true))           % report only, change nothing
 %
 % The tree is now nine folders deep in places, and a calibration in `calibrations\level 3\`
-% calls `esrMultiLineFit` in `functions\`, which means folders have to be added rather than
+% calls `esrFitRobust` in `functions\`, which means folders have to be added rather than
 % just cd'd into. Same derivation as setup7Paths: this file lives in Setup 7\functions\, so
 % two levels up is the root and no drive letter is written down anywhere.
 %

@@ -408,7 +408,7 @@ function out = calibB1Rabi(opts)
                     % THE WINDOW IS SIZED FROM THE LINEWIDTH WE JUST MEASURED, not from a
                     % constant. A window only a little wider than the line is wrong twice
                     % over: the fitter's baseline has no clean wings to sit on, so it eats
-                    % part of the line; and esrMultiLineFit rejects a component whose FWHM
+                    % part of the line; and esrFitRobust rejects a component whose FWHM
                     % exceeds the span, which is the correct test but bites hard when the
                     % span is small. A fixed +/- 15 MHz did exactly this on a 12 MHz line --
                     % the fit found the dip at the predicted frequency with a sensible depth
@@ -834,12 +834,12 @@ function p = measureAt(h, rho, freqs, rel, tag, opts)
     else
         % Coarse: the line the FIELD FIT assigned to the lower aligned transition, not simply
         % the lowest fitted centre. The resonator's own response at the low edge of the sweep
-        % gets fitted as a broad "line" (2767 MHz, FWHM 33, at Brho 31.5 on setup 7) below the
-        % real aligned line at 2786. The field fit leaves it unmatched, which is correct --
-        % but taking min([L.centre]) picked it anyway, and the whole point was then rejected
-        % as "not the aligned orientation" with the right line sitting in the fit. Same fix as
-        % calibFieldAlign: identify the line by physics, fall back to position only when the
-        % field fit did not converge (and the gate below then rejects it, as before).
+        % used to be fitted as a broad "line" (2767 MHz, FWHM 33, at Brho 31.5 on setup 7)
+        % below the real aligned line at 2786, and min([L.centre]) picked it. esrFitRobust now
+        % recognises that dip as the resonance and keeps it out of L (sv.resonance), so this
+        % is the SECOND guard rather than the only one: identify the line by physics, fall
+        % back to position only when the field fit did not converge (and the gate below then
+        % rejects it, as before). Same rule as calibFieldAlign.
         [~, iPick] = min([L.centre]);
         iAl = alignedLowerLine(L, sv);
         if ~isempty(iAl) && iAl ~= iPick
@@ -1342,8 +1342,8 @@ function drawIt(P, good, fit, rel, fTarget, rhoStar, opts)
     % text box at (f0, wMax^2) lands in the same corner as the legend and under the title --
     % three things fighting for the top of the axes. One place each.
     styleAxes(ax1, C);
-    xlabel(ax1, 'NV line frequency  [MHz]', 'Color', C.ink2);
-    ylabel(ax1, '\Omega^2  [MHz^2]', 'Color', C.ink2);
+    xlabel(ax1, 'NV line frequency  (MHz)', 'Color', C.ink2);
+    ylabel(ax1, '\Omega^2  (MHz^2)', 'Color', C.ink2);
     % 'best' rather than a fixed corner: the Lorentzian peak can sit anywhere in the scan, so
     % which corner is free depends on the data.
     legendOf(ax1, {hD, hF, hH, hBand, hT}, ...
@@ -1399,8 +1399,8 @@ function drawIt(P, good, fit, rel, fTarget, rhoStar, opts)
         ylim(ax2, yl2);
     end
     styleAxes(ax2, C);
-    xlabel(ax2, 'B_\rho requested  [G]', 'Color', C.ink2);
-    ylabel(ax2, 'NV line frequency  [MHz]', 'Color', C.ink2);
+    xlabel(ax2, 'B_\rho requested  (G)', 'Color', C.ink2);
+    ylabel(ax2, 'NV line frequency  (MHz)', 'Color', C.ink2);
     legendOf(ax2, {hD2, hL2, hS2, hB2}, ...
              {sprintf('used (%d)', numel(G)), 'straight-line fit', 'optimum', ...
               sprintf('rejected (%d)', nDrop)}, 'northeast');
@@ -1454,8 +1454,8 @@ function drawIt(P, good, fit, rel, fTarget, rhoStar, opts)
               'Color', C.ink, 'FontWeight', 'bold');
     end
     styleAxes(ax3, C);
-    xlabel(ax3, 'B_\rho requested  [G]', 'Color', C.ink2);
-    ylabel(ax3, 'f - fit  [MHz]', 'Color', C.ink2);
+    xlabel(ax3, 'B_\rho requested  (G)', 'Color', C.ink2);
+    ylabel(ax3, 'f - fit  (MHz)', 'Color', C.ink2);
 
     try; set(fig, 'Position', [200 80 820 860]); catch; end
 end
@@ -1520,7 +1520,7 @@ function [halfLo, halfHi, gap] = narrowWindow(fPred, rel, opts)
 %
 % esrNarrowHalf is a FLOOR:  want = max(esrNarrowHalf, narrowHalfFwhmFactor*fwhm).  Setting
 % it to 7 changes nothing when 2.5 linewidths is 30, which is the whole point of the floor --
-% a window narrower than the line gets the line rejected as baseline by esrMultiLineFit's own
+% a window narrower than the line gets the line rejected as baseline by esrFitRobust's own
 % width test. So the fix is not a smaller floor, it is a CAP, and the cap has to come from
 % the neighbour rather than from a number typed in. esrNarrowHalfMax is there as a hard
 % override for when you want one anyway.
@@ -1556,7 +1556,7 @@ function [halfLo, halfHi, gap] = narrowWindow(fPred, rel, opts)
     elseif hardMax < fwhm
         warning('calibB1Rabi:narrowWindow', ...
                 ['esrNarrowHalfMax = %.1f MHz is narrower than the %.1f MHz linewidth. ' ...
-                 'esrMultiLineFit rejects a component whose FWHM exceeds the span, so ' ...
+                 'esrFitRobust rejects a component whose FWHM exceeds the span, so ' ...
                  'expect the line to be thrown out as baseline. This is what you asked for; ' ...
                  'leave esrNarrowHalfMax empty and let esrNeighbourGuard size it instead.'], ...
                 hardMax, fwhm);

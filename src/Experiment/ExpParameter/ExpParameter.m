@@ -116,7 +116,7 @@ classdef (Abstract) ExpParameter < HiddenMethodsHandle & PropertiesDisplaySorted
                         obj.expName, obj.name, class(obj.units));
                     lbl = obj.name;
                 else
-                    lbl = sprintf('%s [%s]', obj.name, obj.units);
+                    lbl = sprintf('%s (%s)', obj.name, obj.units);     % units in parentheses, not brackets
                 end
             end
         end

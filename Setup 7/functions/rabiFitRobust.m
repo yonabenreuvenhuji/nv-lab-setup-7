@@ -26,7 +26,7 @@ function out = rabiFitRobust(args)
 %
 % ONE OPTIONS STRUCT, not positional flags. Everything optional lives in opts and gets
 % filled in by withDefaults, the same convention as calibFieldSurvey, calibFieldAlign
-% and esrMultiLineFit. That is deliberate and it is not only taste: rabiFit's signature
+% and esrFitRobust. That is deliberate and it is not only taste: rabiFit's signature
 % is (Exp, toSave, path, toPlot, expDecayOrder, varargin), so the common call reads
 %
 %       rabiFit(b, 0, 0, 1, '', 'f', 9)
@@ -116,7 +116,7 @@ function out = rabiFitRobust(args)
 % ERRORS ON THE PULSE TIMES. piTime = 0.5/f + x0 depends on the frequency and the
 % phase, which are correlated, so its variance needs the cross term. Errors are
 % Birge-scaled in both directions and floored at 0.05, the same convention as
-% esrMultiLineFit and for the same measured reason: sterr on this setup is
+% esrFitRobust and for the same measured reason: sterr on this setup is
 % drift-dominated and carries the right shape with the wrong scale.
 %
 % A RESIDUAL AUTOCORRELATION. The number that says "one frequency is the wrong
@@ -603,7 +603,7 @@ end
 
 function [p, C, chi2r, birge, ok, why] = lmFit(resFun, p0, lb, ub, nData)
 % Levenberg-Marquardt, numerical Jacobian, column-scaled, with the covariance kept.
-% Hand-rolled for the same reason as esrMultiLineFit: the covariance is the output
+% Hand-rolled for the same reason as esrFitRobust: the covariance is the output
 % that matters and neither confint nor the Optimization Toolbox provides it here.
     ok = false; why = ''; chi2r = NaN; birge = 1;
     p = p0(:)';  nP = numel(p);
@@ -767,7 +767,7 @@ function showPlots(o)
 
     ylabel(axM, yLabelOf(o, S), 'Color', S.col.ink2);
     if ~o.opts.showResid
-        xlabel(axM, 'pulse duration \tau  [\mus]', 'Color', S.col.ink2);
+        xlabel(axM, 'pulse duration \tau  (\mus)', 'Color', S.col.ink2);
     end
     keepMask = true(1, numel(o.t)); keepMask(bad) = false;
     S.focus(axM, [yf(:); reshape(o.y(keepMask), [], 1)]);
@@ -779,7 +779,7 @@ function showPlots(o)
         axR = S.axes(subplot(4, 1, 4));
         S.zeroLine(axR, [min(o.t) max(o.t)]);
         S.resid(axR, o.t, o.resid ./ max(o.e, eps), S.col.s1);
-        xlabel(axR, 'pulse duration \tau  [\mus]', 'Color', S.col.ink2);
+        xlabel(axR, 'pulse duration \tau  (\mus)', 'Color', S.col.ink2);
         ylabel(axR, 'residual / \sigma', 'Color', S.col.ink2);
         S.tight(axR, o.t);
         S.title(axR, sprintf('\\chi^2_\\nu = %.2f, lag-1 autocorr %+.2f', ...
@@ -800,7 +800,7 @@ function showPlots(o)
             plot(ax2, [o.fAll(k) o.fAll(k)], ylim(ax2), '--', 'Color', S.col.flag, ...
                  'LineWidth', 1.2);
         end
-        xlabel(ax2, 'trial frequency  [MHz]', 'Color', S.col.ink2);
+        xlabel(ax2, 'trial frequency  (MHz)', 'Color', S.col.ink2);
         ylabel(ax2, 'weighted residual', 'Color', S.col.ink2);
         S.title(ax2, sprintf('dashed = fitted %s MHz', ...
                              strjoin(cellstr(num2str(o.fAll(:), '%.3f'))', ', ')));

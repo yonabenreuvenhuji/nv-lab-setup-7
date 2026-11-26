@@ -954,8 +954,8 @@ function drawIt(out, opts)
             'GridLineStyle', '-', 'Layer', 'top', 'TickDir', 'out', 'FontSize', 10);
     try; set(ax, 'GridAlpha', 0.18); catch; end
     xlim(ax, [0 360]); set(ax, 'XTick', 0:45:360);
-    xlabel(ax, 'channel 2 phase  [deg]', 'Color', C.ink2);
-    ylabel(ax, '\Omega_{Rabi}  [MHz]', 'Color', C.ink2);
+    xlabel(ax, 'channel 2 phase  (deg)', 'Color', C.ink2);
+    ylabel(ax, '\Omega_{Rabi}  (MHz)', 'Color', C.ink2);
     ttl = sprintf('\\phi_{max} = %.2f \\pm %.2f deg    amplitudeDiff = [0 %+.3f] dB', ...
                   out.phiMax, out.fit.phiMaxErr, out.delta);
     title(ax, ttl, 'Color', C.ink, 'FontWeight', 'normal');

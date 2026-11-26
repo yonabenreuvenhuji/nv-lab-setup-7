@@ -11,8 +11,8 @@ classdef ExpGalvo < Experiment
         MOVE = 1
         RGB = 255
         AXIS_NAME = ['x' 'y']
-        XLABEL = 'move to positions [um]'
-        YLABEL = 'measured positions [um]'
+        XLABEL = 'move to positions (um)'
+        YLABEL = 'measured positions (um)'
     end
     
     properties

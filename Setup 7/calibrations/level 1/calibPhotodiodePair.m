@@ -650,8 +650,9 @@ function out = analyseNoise(N, opts)
     if B > 0
         % A fixed seed, so a replay gives the same error bars, and the caller's generator
         % state put back afterwards (experiments draw their randperm orders from it).
+        % 'twister' named, because a bare rng(seed) errors if the session is in legacy mode.
         rngOld = rng;
-        rng(12345);
+        rng(12345, 'twister');
         for b = 1:B
             ix = ceil(rand(nPair, 1) * nPair);
             s0 = std(qNone(ix));

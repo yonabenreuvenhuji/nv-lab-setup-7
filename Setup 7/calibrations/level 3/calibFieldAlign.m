@@ -170,10 +170,10 @@ function out = calibFieldAlign(opts)
     % Check the helpers are reachable BEFORE touching the field. A missing function
     % discovered halfway through a scan leaves the coils at a scan value rather than
     % where they started.
-    for fn = {'esrMultiLineFit', 'calibFieldSurvey'}
+    for fn = {'esrFitRobust', 'esrFieldSolve', 'calibFieldSurvey'}
         if isempty(which(fn{1}))
-            error(['%s is not on the MATLAB path. It ships alongside this file in the ' ...
-                   'level 4 folder -- add that folder with addpath, or cd into it.'], fn{1});
+            error(['%s is not on the MATLAB path. Run setup7AddPath once this session ' ...
+                   '(it adds functions\\ and every calibration level).'], fn{1});
         end
     end
 

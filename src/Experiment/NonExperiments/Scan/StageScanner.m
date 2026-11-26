@@ -776,9 +776,9 @@ classdef StageScanner < EventSender & EventListener & Savable
             axisLetters = obj.mStageScanParams.getScanAxes;
             switch obj.getScanDimensions
                 case 1
-                    string = sprintf('%s [%s]', axisLetters, StringHelper.MICRON); % for example, 'x (?m)'
+                    string = sprintf('%s (%s)', axisLetters, StringHelper.MICRON); % for example, 'x (?m)'
                 case 2
-                    string = sprintf('%s [%s]', axisLetters(1), StringHelper.MICRON); % (as above)
+                    string = sprintf('%s (%s)', axisLetters(1), StringHelper.MICRON); % (as above)
                 otherwise
                     string = 'bottom label :)';
             end
@@ -790,7 +790,7 @@ classdef StageScanner < EventSender & EventListener & Savable
                     string = Spcm.signalUnits();    % 'V' with the photodiode, 'kcps' with a counter
                 case 2
                     axisLetters = obj.mStageScanParams.getScanAxes;
-                    string = sprintf('%s [%s]', axisLetters(2), StringHelper.MICRON); % for example, 'y (?m)'
+                    string = sprintf('%s (%s)', axisLetters(2), StringHelper.MICRON); % for example, 'y (?m)'
                 otherwise
                     string = 'left label :)';
             end

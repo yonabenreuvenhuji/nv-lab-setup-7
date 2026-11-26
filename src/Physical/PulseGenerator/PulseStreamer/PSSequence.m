@@ -96,7 +96,7 @@ classdef PSSequence
             obj.plotDigital();
             title('Digital outputs');
             legend show;
-            xlabel('Time [ns]');
+            xlabel('Time (ns)');
             linkaxes([ax1,ax2], 'x');
         end
         
