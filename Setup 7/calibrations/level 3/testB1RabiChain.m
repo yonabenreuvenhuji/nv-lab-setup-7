@@ -62,7 +62,10 @@ function out = testB1RabiChain(opts)
             opts.coilK, opts.coilM, rhoTrue);
     fprintf('============================================================\n');
 
-    rand('state', opts.seed); randn('state', opts.seed);                    %#ok<RAND>
+    % Not rand('state', k): that switches the whole session to the legacy generator, and
+    % every later rng(seed) in it -- testMwQuadrature, calibPhotodiodePair -- then errors.
+    rngOld = rng;  rng(opts.seed, 'twister');
+    cleanup = onCleanup(@() rng(rngOld)); %#ok<NASGU>
 
     % ---------------- TEST A ----------------
     fprintf('\n--- TEST A: clean wide scan, 13 fields over 10 G ---\n');

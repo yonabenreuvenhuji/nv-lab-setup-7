@@ -26,7 +26,9 @@ function out = testMwQuadrature(opts)
 
     if ~exist('opts', 'var'); opts = struct(); end
     opts = withDefaults(opts, struct('nPull', 30, 'seed', 3, 'verbose', true), 'testMwQuadrature');
-    rngOld = rng;  rng(opts.seed);
+    % The generator is named: a bare rng(seed) errors once anything in the session has
+    % called rand('state', k), and rng(seed, 'twister') draws the same numbers.
+    rngOld = rng;  rng(opts.seed, 'twister');
     cleanup = onCleanup(@() rng(rngOld)); %#ok<NASGU>
 
     base = struct('omega1', 1.72, 'epsDb', 0.5, 'phaseErrDeg', 0, 'grad', 0, ...

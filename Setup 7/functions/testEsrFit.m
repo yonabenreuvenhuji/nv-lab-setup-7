@@ -19,7 +19,7 @@ function allOk = testEsrFit(realFile)
 %   5  interface       unknown options, the positional form, struct input, modelAt
 
     if ~exist('realFile', 'var'); realFile = ''; end
-    rng(20261126);
+    rng(20261126, 'twister');     % named: a bare rng(seed) errors in a legacy-mode session
     nFail = 0; nCheck = 0;
     q = struct('plotIt', false, 'verbose', false);
     lor = @(f, c, w) 1 ./ (1 + (2*(f - c)/w).^2);

@@ -37,7 +37,10 @@ function out = testMwPairChain(opts)
     fprintf('         relative phase of maximum drive %.1f deg\n', phi0);
     fprintf('         Omega1+Omega2 %.3f,  |Omega1-Omega2| %.3f MHz\n', O1+O2, abs(O1-O2));
     fprintf('============================================================\n');
-    randn('state', opts.seed); rand('state', opts.seed);                    %#ok<RAND>
+    % Not randn('state', k): that switches the whole session to the legacy generator, and
+    % every later rng(seed) in it -- testMwQuadrature, calibPhotodiodePair -- then errors.
+    rngOld = rng;  rng(opts.seed, 'twister');
+    cleanup = onCleanup(@() rng(rngOld)); %#ok<NASGU>
 
     % ---------------- TEST A: the dB round trip ----------------
     fprintf('\n--- TEST A: does the fitted dB offset actually equalise them? ---\n');
