@@ -35,6 +35,11 @@ classdef AWGExpMwQuadrature < AWGExpRabi
     % It inherits the Rabi's NAME ('AWG Rabi'), so constructing one replaces any Rabi object
     % in the workspace, exactly as calibMwPair's own Rabi runs do.
     %
+    % THE LIVE PLOT is the Rabi's window, but its x axis is the configuration, not a time:
+    % the ticks name each one ('A+ -1' = channel 2 leads, read-out about 135 deg, channel 2
+    % at -1 dB; 'bright', 'dark'). Since the next Rabi inherits the same window, delete
+    % clears it so that Rabi draws its own axis from scratch.
+    %
     % WAVEFORM. Channel c plays, for t from 0 after its zero pad,
     %       A(c) * k(c) * cos(w*t - phase(c) - extra)
     % with phase(c) from channelsDifference + channelPhase (the Rabi's own convention, so
@@ -52,9 +57,15 @@ classdef AWGExpMwQuadrature < AWGExpRabi
         configs = []            % one struct per point: name, kind, offsetDb, lead, refPhaseDeg
     end
 
+    properties (Constant)
+        X_LABEL = ['setting  (A: ch 2 leads, B: ch 1 leads;  + / -: read-out about ' ...
+                   '135\circ / -45\circ;  then the ch 2 offset (dB))']
+    end
+
     methods
         function obj = AWGExpMwQuadrature()
             obj@AWGExpRabi();
+            obj.plotXLabel = AWGExpMwQuadrature.X_LABEL;
             obj.shouldAutosave = false;
             obj.useSequenceWalk = true;
             obj.rebuildConfigs();
@@ -102,6 +113,42 @@ classdef AWGExpMwQuadrature < AWGExpRabi
                 obj.tau = newTau;
             end
         end
+
+        function delete(obj)
+            % The next 'AWG Rabi' takes over this window with these curves still in it, and
+            % then only updates the data -- it would keep this x label and these ticks. Empty
+            % the axes so it draws its own from scratch. Cosmetic: never an error.
+            try
+                ax = obj.gAxes;
+                if ~isempty(ax) && isgraphics(ax)
+                    delete(ax.Children);
+                    set(ax, 'XTickMode', 'auto', 'XTickLabelMode', 'auto');
+                    xlabel(ax, '');
+                end
+            catch
+            end
+        end
+    end
+
+    methods (Access = {?Experiment, ?ViewExperimentPlot})
+        function plotResults(obj)
+            % The Rabi's plot, then a tick per configuration, named. Redone on every update,
+            % after the styling, which resets the x limits but not the ticks.
+            plotResults@AWGExpRabi(obj);
+            try
+                ax = obj.gAxes;
+                x = obj.mCurrentXAxisParam.value;
+                n = numel(obj.configs);
+                if ~isempty(ax) && isgraphics(ax) && n > 0 && isequal(x(:)', 1:n)
+                    set(ax, 'XTick', 1:n, ...
+                        'XTickLabel', AWGExpMwQuadrature.tickLabels(obj.configs));
+                    xlabel(ax, AWGExpMwQuadrature.X_LABEL);
+                end
+            catch labelErr
+                warning('AWGExpMwQuadrature:plotLabels', 'Could not label the plot: %s', ...
+                        labelErr.message);
+            end
+        end
     end
 
     methods (Static)
@@ -118,6 +165,22 @@ classdef AWGExpMwQuadrature < AWGExpRabi
             end
             c(end+1) = item('bright', 'bright', 0, 0, 0);
             c(end+1) = item('dark', 'dark', 0, 0, 0);
+        end
+
+        function L = tickLabels(cfg)
+            % Short x-axis names: 'A+ -1' (channel 2 leads, read-out about 135 deg, channel 2
+            % at -1 dB), 'B- +0', ..., 'bright', 'dark'.
+            L = cell(1, numel(cfg));
+            for i = 1:numel(cfg)
+                c = cfg(i);
+                if strcmp(c.kind, 'quad')
+                    who = 'B';  if c.lead == 2; who = 'A'; end
+                    sgn = '-';  if abs(c.refPhaseDeg - 135) < 1e-9; sgn = '+'; end
+                    L{i} = sprintf('%s%s %+g', who, sgn, c.offsetDb);
+                else
+                    L{i} = c.kind;
+                end
+            end
         end
 
         function s = cfgItem(name, kind, d, lead, ref)
