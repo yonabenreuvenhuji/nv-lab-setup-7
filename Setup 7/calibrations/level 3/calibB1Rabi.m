@@ -662,7 +662,7 @@ function [P, PC] = pointsFromReplay(R, opts)
                    'fRabi', NaN, 'fRabiErr', NaN, 'contrast', NaN, 'r2', NaN, ...
                    'r2Ceiling', NaN, 'r2Deficit', NaN, ...
                    'chi2', NaN, 'residAutocorr', NaN, 'piNs', NaN, 'piErrNs', NaN, ...
-                   'rabiSeconds', NaN, 'shapeWarn', false);
+                   'rabiSeconds', NaN, 'shapeWarn', false, 'skippedMHz', NaN);
         switch nc
             case 8
                 q.fwhm      = R(i,3);
@@ -767,7 +767,7 @@ function p = measureAt(h, rho, freqs, rel, tag, opts)
                'fRabi', NaN, 'fRabiErr', NaN, 'contrast', NaN, 'r2', NaN, ...
                'r2Ceiling', NaN, 'r2Deficit', NaN, ...
                'chi2', NaN, 'residAutocorr', NaN, 'piNs', NaN, 'piErrNs', NaN, ...
-               'rabiSeconds', NaN, 'shapeWarn', false);
+               'rabiSeconds', NaN, 'shapeWarn', false, 'skippedMHz', NaN);
 
     % windowLo/windowHi/neighbourGap ARE SEEDED HERE, and that is the whole point of these
     % three lines. They are only assigned in the narrow branch below, i.e. only on the fine
@@ -832,7 +832,20 @@ function p = measureAt(h, rho, freqs, rel, tag, opts)
         % the prediction is the only rule that says "the line we came for".
         [~, iPick] = min(abs([L.centre] - p.fPred));
     else
+        % Coarse: the line the FIELD FIT assigned to the lower aligned transition, not simply
+        % the lowest fitted centre. The resonator's own response at the low edge of the sweep
+        % gets fitted as a broad "line" (2767 MHz, FWHM 33, at Brho 31.5 on setup 7) below the
+        % real aligned line at 2786. The field fit leaves it unmatched, which is correct --
+        % but taking min([L.centre]) picked it anyway, and the whole point was then rejected
+        % as "not the aligned orientation" with the right line sitting in the fit. Same fix as
+        % calibFieldAlign: identify the line by physics, fall back to position only when the
+        % field fit did not converge (and the gate below then rejects it, as before).
         [~, iPick] = min([L.centre]);
+        iAl = alignedLowerLine(L, sv);
+        if ~isempty(iAl) && iAl ~= iPick
+            p.skippedMHz = L(iPick).centre;
+            iPick = iAl;
+        end
     end
     p.fLine = L(iPick).centre;  p.fLineErr = L(iPick).centreErr;
     p.fwhm  = L(iPick).fwhm;    p.depth    = L(iPick).depth;
@@ -898,6 +911,26 @@ function p = measureAt(h, rho, freqs, rel, tag, opts)
     end
 
     p.good = true;
+end
+
+function iPick = alignedLowerLine(L, sv)
+% Index into L of the line the field fit matched to the LOWER line of the aligned pair, or []
+% when the fit did not converge or did not match that transition. Lower specifically: the
+% scan follows the ms=0 -> ms=-1 aligned line, and if only the upper aligned line were matched,
+% falling back to "lowest" (and letting the gate reject it) is right, while taking the upper
+% one would silently follow the wrong transition.
+    iPick = [];
+    if ~(isfield(sv, 'solve') && isstruct(sv.solve) && isfield(sv.solve, 'ok') && sv.solve.ok ...
+            && isfield(sv.solve, 'matched') && ~isempty(sv.solve.matched) ...
+            && isfield(sv.solve, 'alignedAxisIdx') && isfield(sv.solve, 'alignedLines'))
+        return
+    end
+    M = sv.solve.matched;
+    lowPred = min(sv.solve.alignedLines);
+    k = find([M.axis] == sv.solve.alignedAxisIdx & abs([M.predicted] - lowPred) < 1e-9, 1);
+    if isempty(k); return; end
+    [dd, j] = min(abs([L.centre] - M(k).centre));
+    if dd < 1e-6; iPick = j; end
 end
 
 function w = medianFwhmOf(P)
@@ -1123,6 +1156,9 @@ function printRow(p)
         if p.shapeWarn; note = 'ok, residuals autocorrelated'; end
     else
         note = ['REJECTED: ' p.why];
+    end
+    if isfield(p, 'skippedMHz') && isfinite(p.skippedMHz)
+        note = sprintf('%s (skipped unmatched line at %.1f)', note, p.skippedMHz);
     end
     fprintf('%8.3f %10.2f %7.2f %9.3f %9.1f %7.2f %7.3f %7.3f  %s\n', ...
             p.rho, p.fLine, p.fwhm, p.fRabi, p.piNs, 100*p.contrast, p.r2, p.r2Ceiling, note);
