@@ -61,9 +61,14 @@ classdef ViewExperimentPlot < ViewVBox & EventListener
                 'Position', [padding, padding, rbWidth, rbHeight], ...  % [fromLeft, fromBottom, width, height]
                 'UserData', true ... usually, == referenced
                 );
+            if isMATLABReleaseOlderThan('R2025a')
+                openLabel = '<html><center>Open In<br />Figure</center></html>';  % Java-based uicontrols render HTML
+            else
+                openLabel = sprintf('Open In\nFigure');     % R2025a+ uicontrols show HTML as raw text
+            end
             obj.btnOpenInFig = uicontrol(obj.PROP_BUTTON{:}, ...
                 'Parent', hboxControls, ...
-                'String', '<html><center>Open In<br />Figure</center></html>', ...
+                'String', openLabel, ...
                 'Callback', @obj.btnOpenInFigureCallback);
             
             hboxControls.Widths = [-1, 100, 150, 70];

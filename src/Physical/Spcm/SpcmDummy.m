@@ -93,7 +93,7 @@ classdef SpcmDummy < Spcm
         
         
     %%% From PulseGenerator %%%
-        function prepareExperimentCount(obj, nReads, timeout)
+        function prepareExperimentCount(obj, nReads, timeout, nParameters) %#ok<INUSD> same signature as the real SPCM classes
             % Prepare to read spcm count from opening the spcm window
             if ~ValidationHelper.isValuePositiveInteger(nReads)
                 obj.sendError(sprintf('Can''t prepare for reading %d times, only positive integers allowed! Igonring.', nReads));

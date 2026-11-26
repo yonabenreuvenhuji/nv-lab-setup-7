@@ -20,7 +20,7 @@ classdef AWGsensingACfield < ExperimentAWG
         ACsource
     end
 
-    properties (Depentent)
+    properties (Dependent)  % was misspelled 'Depentent', which stopped the class from loading
         signalFrequency
     end
     

@@ -143,8 +143,8 @@ if ~exist('headersIn','var'), headersIn = []; end
 
 assert(usejava('jvm'),'Function requires Java')
 
-import com.mathworks.mlwidgets.io.InterruptibleStreamCopier;
-com.mathworks.mlwidgets.html.HTMLPrefs.setProxySettings %Proxy settings need to be set
+% (MATLAB R2026b upgrade) No com.mathworks.* internals: they belong to the retired
+% Java desktop. Proxy settings are not needed for the lab-network Pulse Streamer.
 
 %Create a urlConnection.
 %-----------------------------------
@@ -259,9 +259,16 @@ status = struct(...
 %PROCESSING OF OUTPUT
 %----------------------------------------------------------
 byteArrayOutputStream = java.io.ByteArrayOutputStream;
-% This StreamCopier is unsupported and may change at any time. OH GREAT :/
-isc = InterruptibleStreamCopier.getInterruptibleStreamCopier;
-isc.copyStream(inputStream,byteArrayOutputStream);
+% Copy the response with core java.nio instead of the undocumented
+% com.mathworks InterruptibleStreamCopier (gone with the Java desktop).
+inChannel  = java.nio.channels.Channels.newChannel(inputStream);
+outChannel = java.nio.channels.Channels.newChannel(byteArrayOutputStream);
+buffer     = java.nio.ByteBuffer.allocate(65536);
+while inChannel.read(buffer) >= 0 || buffer.position() > 0
+    buffer.flip();
+    outChannel.write(buffer);
+    buffer.compact();
+end
 inputStream.close;
 byteArrayOutputStream.close;     
 
@@ -356,17 +363,10 @@ catch ME
     error('Failure to parse URL or protocol not supported for:\nURL: %s',urlChar);
 end
 
-% Get the proxy information using MathWorks facilities for unified proxy
-% preference settings.
-mwtcp = com.mathworks.net.transport.MWTransportClientPropertiesFactory.create();
-proxy = mwtcp.getProxy();
-
-% Open a connection to the URL.
-if isempty(proxy)
-    urlConnection = url.openConnection;
-else
-    urlConnection = url.openConnection(proxy);
-end
+% Open a connection to the URL. (The MathWorks proxy lookup through
+% com.mathworks.net.transport was removed for the R2026b upgrade; Java's
+% default proxy selection still applies.)
+urlConnection = url.openConnection;
 
 
 end

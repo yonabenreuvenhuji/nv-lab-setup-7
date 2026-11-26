@@ -201,9 +201,8 @@ classdef GuiController < handle
         function maximize(obj)
             % Maximize the window.
             % This function can only run AFTER the window has been rendered. Calling it on an invisible window won't work
-            warning('off', 'MATLAB:HandleGraphics:ObsoletedProperty:JavaFrame');
-            jFrame = get(handle(obj.figureWindow), 'JavaFrame');
-            set(jFrame, 'Maximized', true);
+            % (The JavaFrame property this used was removed in R2025a.)
+            obj.figureWindow.WindowState = 'maximized';
         end
         
 		% Move the window to the middle of the screen

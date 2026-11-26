@@ -125,9 +125,15 @@ classdef FrequencyGeneratorTektronixAWG < FrequencyGenerator
                                 %   is far coarser than a few ms, so pause(0.005) can cost ~15 ms
                                 %   and would make things worse.
 
-        useVisadev = false;     % logical. Which MATLAB instrument interface to talk through.
+        useVisadev = true;      % logical. Which MATLAB instrument interface to talk through.
+                                %
+                                % Default is true since the MATLAB R2026b upgrade: visa() and
+                                % its fopen/fwrite/fscanf/query functions throw an error from
+                                % R2026b on, and the constructor connects before any script can
+                                % change this flag. runScriptBasicExpAWG already set it to true.
                                 %
                                 % false - the legacy visa()/fopen/fwrite/fscanf/query interface.
+                                %         Errors from R2026b; works (with warnings) up to R2026a.
                                 %         Deprecated since ~R2021a. Every property access on the
                                 %         object goes through instrument.subsref ->
                                 %         ICTRemoveFunctionalityHelper.showWarning, which builds a

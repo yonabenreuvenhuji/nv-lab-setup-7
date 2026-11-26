@@ -170,10 +170,14 @@ try
     
 catch ME  % Handle errors during initializing the engine:
     if ~usejava('jvm')
-        Error_L('needJava', 'DataHash needs Java.');
+        % No Java (MATLAB R2026b+ does not install one): hash the same byte stream
+        % with a MATLAB-side digest. Content-based, stable within a session -- see
+        % DataHashNoJavaEngine. (Was: Error_L('needJava', 'DataHash needs Java.'))
+        Engine = DataHashNoJavaEngine();
+    else
+        Error_L('BadInput2', 'Invalid hashing algorithm: [%s]. %s', ...
+            Method, ME.message);
     end
-    Error_L('BadInput2', 'Invalid hashing algorithm: [%s]. %s', ...
-        Method, ME.message);
 end
 
 % Create the hash value: -------------------------------------------------------
