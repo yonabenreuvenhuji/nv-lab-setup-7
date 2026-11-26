@@ -200,7 +200,7 @@ classdef AWGExpESRPulsed < ExperimentAWG
             obj.laserInitializationDuration = 30;    % us
 
             obj.isPlotAlternateAvailable = true;
-            obj.displayType2 = 'Raw signal';     % was 'kcps' -- wrong with the photodiode (V)
+            obj.displayType2 = 'Raw signal [kcps]';   % the window shows 'Raw signal [V]' with the photodiode (Spcm.localiseUnits)
             obj.mCurrentXAxisParam = ExpParamDoubleVector('Frequency', [], [], 'MHz', obj.NAME);
             % Labels as in the robust fit's figure (ExpPlotStyle / fitStyle)
             obj.plotXLabel = ExpPlotStyle.X_FREQUENCY;
