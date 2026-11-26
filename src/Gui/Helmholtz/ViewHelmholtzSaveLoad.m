@@ -1,99 +1,94 @@
-classdef ViewHelmholtzSaveLoad < GuiComponent
-    %VIEWSAVELOAD View to save and load
-    %   Contains ViewSave and ViewLoad
-    
+classdef ViewHelmholtzSaveLoad < GuiComponent & EventListener
+    %VIEWHELMHOLTZSAVELOAD Save and load the Helmholtz state: the "Helmholtz" block of
+    % expProperties.json (currents, field, steps and the coil calibration).
+    %
+    %   Save     to the json the state was last loaded from or saved to -- normally
+    %            setup7Paths().json, the newest calibration folder
+    %   Save As  choose a json (created if it does not exist; other keys are left alone)
+    %   Load     a json with a "Helmholtz" block, or a legacy helmholtzState.mat
+
     properties
-        btnSave        % button
-        btnSaveAs      % button
-        btnLoad        % button
-        
-        tvFileName  % shows the file name with status
-        
+        btnSave
+        btnSaveAs
+        btnLoad
+        tvFileName
         helm
     end
-    
-    properties (Constant)
-        BASE_FILE_NAME = 'helmholtz_setup_';
-        DELAY_BG_COLOR_BACK_SEC = 0.2;
-        GREEN_BG_COLOR = [0.1 1 0.1];
-        RED_BG_COLOR = [1 0.1 0.1];
-        
-        COLOR_DEFAULT = [0 0 0];            % black
-        COLOR_UNSAVED = [1 0.1 0.1];        % red
-        COLOR_SAVED = [0.1 0.1 1];          % blue
-        COLOR_AUTOSAVED = [0.1 0.8 0.1];    % medium-dark green
-    end
-    
+
     methods
-        % constructor
         function obj = ViewHelmholtzSaveLoad(parent, controller)
-            panel = ViewExpandablePanel(parent, controller, 'Save & Load setup properties');
+            panel = ViewExpandablePanel(parent, controller, 'Save & Load (expProperties.json)');
             obj@GuiComponent(panel, controller);
+            obj@EventListener({Helmholtz.NAME});
             obj.helm = getObjByName('Helmholtz');
 
             vboxSave = uix.VBox('Parent', panel.component, 'Spacing', 5, 'Padding', 5);
-            
             saveLoadRow = uix.HBox('Parent', vboxSave, 'Spacing', 5);
-            obj.btnSave = uicontrol(obj.PROP_BUTTON{:}, 'Parent', saveLoadRow, 'string', 'Save');
+            obj.btnSave = uicontrol(obj.PROP_BUTTON{:}, 'Parent', saveLoadRow, 'string', 'Save', ...
+                'TooltipString', 'write the state into the "Helmholtz" block of the json below');
             obj.btnSaveAs = uicontrol(obj.PROP_BUTTON{:}, 'Parent', saveLoadRow, 'string', 'Save As');
-            uix.Empty('Parent', saveLoadRow);  % space
-            obj.btnLoad = uicontrol(obj.PROP_BUTTON{:}, 'Parent', saveLoadRow, 'string', 'Load');
+            uix.Empty('Parent', saveLoadRow);
+            obj.btnLoad = uicontrol(obj.PROP_BUTTON{:}, 'Parent', saveLoadRow, 'string', 'Load', ...
+                'TooltipString', 'a json with a "Helmholtz" block, or an old helmholtzState.mat');
             saveLoadRow.Widths = [-4 -4 -2 -4];
-            
-            obj.tvFileName = uicontrol(obj.PROP_TEXT_NORMAL{:}, 'Parent', vboxSave, 'String', 'File Name: helmholtz_setup_');
-            vboxSave.Heights = [50, 25];
-            
-            
+            obj.tvFileName = uicontrol(obj.PROP_TEXT_NORMAL{:}, 'Parent', vboxSave, 'String', '', ...
+                'HorizontalAlignment', 'left');
+            vboxSave.Heights = [40, 32];
+
             obj.btnSave.Callback = @obj.btnSaveCallback;
             obj.btnSaveAs.Callback = @obj.btnSaveAsCallback;
             obj.btnLoad.Callback = @obj.btnLoadCallback;
-            
-            obj.height = sum( vboxSave.Heights)+50;
-            obj.width = 300;
 
+            obj.height = sum(vboxSave.Heights) + 50;
+            obj.width = 300;
             obj.refresh;
         end
-        
+
         function refresh(obj)
-            filename = ['File Name: ', obj.BASE_FILE_NAME, datestr(now, '20yymmdd_HHMMSS')];
-            obj.tvFileName.String = filename;
+            f = obj.defaultFile();
+            if isempty(f)
+                obj.tvFileName.String = 'no state file yet: use Save As';
+            else
+                obj.tvFileName.String = {'state file:', f};
+            end
         end
-        
-        function btnSaveCallback(obj,~,~)
-            filename = [obj.BASE_FILE_NAME, datestr(now, '20yymmdd_HHMMSS'), '.mat'];
-            fullPath = sprintf('%s%s', SaveLoad.PATH_DEFAULT_AUTO_SAVE, filename);
-            obj.helm.save(fullPath);
+
+        function f = defaultFile(obj)
+            f = obj.helm.stateFile;
+            if isempty(f) && exist('setup7Paths', 'file') == 2
+                try; f = setup7Paths().json; catch; f = ''; end
+            end
         end
-        
-        function btnSaveAsCallback(obj,~,~)
-            [fileName, fullPathFolder, ~] = uiputfile('.mat', 'Save As...');
-            fullPath = [fullPathFolder, fileName];
-            obj.helm.save(fullPath);
+
+        function btnSaveCallback(obj, ~, ~)
+            f = obj.defaultFile();
+            if isempty(f); obj.btnSaveAsCallback(); return; end
+            obj.helm.save(f);
+            obj.refresh;
         end
-        
-        function btnLoadCallback(obj,~,~)
-            [fileName, folderName,~] = uigetfile('*.mat', 'Choose file to load...');
-            fullPath = [folderName, fileName];
-            obj.helm.load(fullPath);
+
+        function btnSaveAsCallback(obj, ~, ~)
+            [fileName, folder] = uiputfile('*.json', 'Save the Helmholtz state into...', ...
+                                           obj.defaultFile());
+            if isequal(fileName, 0); return; end
+            obj.helm.save(fullfile(folder, fileName));
+            obj.refresh;
         end
-        
+
+        function btnLoadCallback(obj, ~, ~)
+            [fileName, folder] = uigetfile({'*.json;*.mat', 'expProperties.json or helmholtzState.mat'}, ...
+                                           'Load the Helmholtz state from...', obj.defaultFile());
+            if isequal(fileName, 0); return; end
+            obj.helm.load(fullfile(folder, fileName));
+            obj.refresh;
+        end
     end
-    
-    %%
-    methods (Static)
-        function RGB = statusColor(status)
-            % Returns appropriate color for status
-            RGB =  ViewSaveLoad.COLOR_DEFAULT;
-            if ~ischar(status); return; end
-            switch status
-                case SaveLoad.STRUCT_STATUS_SAVED
-                    RGB = ViewSaveLoad.COLOR_SAVED;
-                case SaveLoad.STRUCT_STATUS_AUTO_SAVED
-                    RGB = ViewSaveLoad.COLOR_AUTOSAVED;
-                case SaveLoad.STRUCT_STATUS_NOT_SAVED
-                    RGB = ViewSaveLoad.COLOR_UNSAVED;
+
+    methods
+        function onEvent(obj, event)
+            if ~event.isError
+                obj.refresh();
             end
         end
     end
 end
-

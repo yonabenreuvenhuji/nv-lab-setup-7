@@ -55,6 +55,9 @@ classdef (Abstract) powerSupply < BaseObject
                     powerSupplyObject = powerSupply_E36234A.create(name, powerSupplyStruct);
                 case 'E36234A_dummy'
                     powerSupplyObject = powerSupply_E36234A_dummy.create(name, powerSupplyStruct);
+                case 'dummy'
+                    % no hardware: for running the Helmholtz class and GUI offline
+                    powerSupplyObject = powerSupply_dummy.create(name, powerSupplyStruct);
                 otherwise
                     EventStation.anonymousError(...
                         ['The requested Power Supply classname ("%s") was not recognized.\n', ...

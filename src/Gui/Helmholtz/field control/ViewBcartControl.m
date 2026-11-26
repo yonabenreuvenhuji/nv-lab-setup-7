@@ -1,280 +1,219 @@
 classdef ViewBcartControl < GuiComponent & EventListener
+    %VIEWBCARTCONTROL Bx, By, Bz, with the limits each can move between.
+    %
+    % In the NV crystal frame once the coils are calibrated (nominal coil frame before).
+    % Each limit is how far that one component can go with the other two held -- the
+    % reachable fields are a parallelepiped, not a box, so these move with the field.
 
     properties (Constant)
         AXES = {'Bx', 'By', 'Bz'};
     end
-    
+
     properties
         btnMoveLeft         % 1x3 button
         btnMoveRight        % 1x3 button
-        
         btnMoveToBlue       % button
         isBlueMovingAvailable   % logical
-        
-        edtSteps            % edit-text 
-
-        tvCurB            % 1x3 text-view for current fiekd
-        edtCurB           % 1x3 edit-input for current field input
-        hboxCurB          % 1x3 vbox that holds those ^ 2 views
-        
-        edtCurBValue      % 1x3 double that holds the values in edtCurB. 
-                            % when an edt is visible, this always holds the
-                            % numeric value shown. if it's invisible, this
-                            % always stores Infinity
+        edtSteps            % edit-text
+        tvCurB              % 1x3 text-view for the present field
+        edtCurB             % 1x3 edit-input for a new value
+        hboxCurB            % 1x3
+        lowerLimLbl         % 1x3
+        upperLimLbl         % 1x3
+        edtCurBValue        % 1x3: the value typed in edtCurB, inf when none
+        panelMain
         helm
     end
-    
+
     methods
         function obj = ViewBcartControl(parent, controller)
             expNames = Experiment.getExperimentNames();
             namesToListenTo = {expNames{:}, Helmholtz.NAME}; %#ok<CCAT>
-            
+
             obj@GuiComponent(parent, controller);
             obj@EventListener(namesToListenTo);
             obj.helm = getObjByName('Helmholtz');
-            
-            %%%% panel init %%%%
-            panelMain = uix.Panel('Parent', parent.component, 'Title', 'Magnetic Field Control - Cartesian (Gauss)', 'Padding', 5);
-            hboxMain = uix.HBox('Parent', panelMain, 'Spacing', 25, 'Padding', 0);
-            vboxLeft = uix.VBox('Parent',hboxMain, 'Spacing', 6); % will contain the grid and "step"
-            
-            %%%% step %%%%
+
+            obj.panelMain = uix.Panel('Parent', parent.component, 'Title', ...
+                'Cartesian (Gauss)', 'Padding', 5);
+            hboxMain = uix.HBox('Parent', obj.panelMain, 'Spacing', 25, 'Padding', 0);
+            vboxLeft = uix.VBox('Parent',hboxMain, 'Spacing', 6);
+
             hboxStep = uix.HBox('Parent', vboxLeft, 'Spacing', 5);
             uicontrol(obj.PROP_LABEL{:}, 'Parent', hboxStep, 'String', 'Step:');
             obj.edtSteps = uicontrol(obj.PROP_EDIT{:}, 'Parent', hboxStep);
             hboxStep.Widths = [-1 -1];
             stepHeightNoSpacing = 25;
-            
-            %%%% the left side grid %%%%
+
             gridLeftSide = uix.Grid('Parent', vboxLeft, 'Spacing', 5);
-            
-            % 1st column: axes labels
             for i = 1:3
                 uicontrol(obj.PROP_LABEL{:}, 'Parent', gridLeftSide, 'String', obj.AXES{i});
             end
-            
-            % 2nd column: lower limits
+            obj.lowerLimLbl = gobjects(1, 3);
             for i = 1:3
-                uicontrol(obj.PROP_LIGHT_LABEL{:}, 'Parent', gridLeftSide, 'String', obj.helm.minMagneticField(i));
+                obj.lowerLimLbl(i) = uicontrol(obj.PROP_LIGHT_LABEL{:}, 'Parent', gridLeftSide, ...
+                    'String', '', 'TooltipString', 'lowest value with the other two held');
             end
-            
-            % 3rd column: arrow left
             obj.btnMoveLeft = gobjects(1, 3);
             for i = 1:3
-                obj.btnMoveLeft(i) = uicontrol(obj.PROP_BUTTON{:}, ...
-                    'Parent', gridLeftSide, ...
-                    'String', StringHelper.LEFT_ARROW, ...
-                    'FontSize', 20);
+                obj.btnMoveLeft(i) = uicontrol(obj.PROP_BUTTON{:}, 'Parent', gridLeftSide, ...
+                    'String', StringHelper.LEFT_ARROW, 'FontSize', 20);
             end
-            
-            % 4th column: current position
             obj.tvCurB = gobjects(1, 3);
             obj.edtCurB = gobjects(1, 3);
             obj.hboxCurB = gobjects(1, 3);
             obj.edtCurBValue = inf * ones(1, 3);
-            % ^ We want a local copy of this value 
             for i = 1:3
                 obj.hboxCurB(i) = uix.HBox('Parent', gridLeftSide, 'Padding', 0, 'Spacing', 0);
                 obj.tvCurB(i) = uicontrol(obj.PROP_EDIT{:}, 'Parent', obj.hboxCurB(i));
                 obj.edtCurB(i) = uicontrol(obj.PROP_EDIT{:}, 'Parent', obj.hboxCurB(i), ...
-                    'ForegroundColor', 'blue', 'BackgroundColor', [0.8 0.9 1]);     % Blue over light blue
-                obj.showEdtCurB(i, false);   % hide the edit-input until it's needed - when user inputs data
+                    'ForegroundColor', 'blue', 'BackgroundColor', [0.8 0.9 1]);
+                obj.showEdtCurB(i, false);
             end
-            
-            % 5th column: arrow right
             obj.btnMoveRight = gobjects(1, 3);
             for i = 1: 3
-                obj.btnMoveRight(i) = uicontrol(obj.PROP_BUTTON{:}, ...
-                    'Parent', gridLeftSide, ...
-                    'String', StringHelper.RIGHT_ARROW, ...
-                    'FontSize', 20);
+                obj.btnMoveRight(i) = uicontrol(obj.PROP_BUTTON{:}, 'Parent', gridLeftSide, ...
+                    'String', StringHelper.RIGHT_ARROW, 'FontSize', 20);
             end
-            
-            % 6th column: upper limits
+            obj.upperLimLbl = gobjects(1, 3);
             for i = 1:3
-                uicontrol(obj.PROP_LIGHT_LABEL{:}, 'Parent', gridLeftSide, 'String', obj.helm.maxMagneticField(i));
+                obj.upperLimLbl(i) = uicontrol(obj.PROP_LIGHT_LABEL{:}, 'Parent', gridLeftSide, ...
+                    'String', '', 'TooltipString', 'highest value with the other two held');
             end
-            
-            % grid properties
-            gridWidths = [50 60 35 70 35 60];
-            gridWithdsRel = -1*gridWidths;
+
+            gridWidths = [55 60 35 70 35 60];
             heightGridTotalNoSpacing = 90;
-            lineHeight = heightGridTotalNoSpacing / 3;
-            gridHeights = lineHeight * ones(1, 3);
-            set(gridLeftSide, 'Widths', gridWithdsRel, 'Heights', gridHeights);
+            set(gridLeftSide, 'Widths', -gridWidths, 'Heights', heightGridTotalNoSpacing/3 * ones(1, 3));
             gridLeftHeightTotal = heightGridTotalNoSpacing + 5 * 3;
             gridLeftWidthTotal = sum(gridWidths) + 4 * length(gridWidths);
-
-            %%%% vbox left - all inner components are ready %%%%
             vboxLeft.Heights = [stepHeightNoSpacing, heightGridTotalNoSpacing+10];
             vboxLeftHeightTotal = gridLeftHeightTotal + stepHeightNoSpacing + 42;
-            
-            
-            %%%% 'move to' button %%%%
+
             vboxRight = uix.VBox('Parent',hboxMain, 'Spacing', 6);
-            obj.btnMoveToBlue = uicontrol(obj.PROP_BUTTON{:}, ...
-                'Parent', vboxRight, ...
-                'String', 'Change To Blue', ...
-                'Enable', 'off', ...       % the starting state - off
-                'TooltipString', 'Move stage to the position appearing in blue');
-            heights = [-2];
-            vboxRight.Heights = heights;
+            obj.btnMoveToBlue = uicontrol(obj.PROP_BUTTON{:}, 'Parent', vboxRight, ...
+                'String', 'Change To Blue', 'Enable', 'off', ...
+                'TooltipString', 'Set the field to the values in blue (all at once)');
+            vboxRight.Heights = -2;
             rightSideTotalWidth = 120;
-            
-            %%%% Set mainHbox widths %%%%
             widthsMain = [gridLeftWidthTotal, rightSideTotalWidth];
-            widthsRelative = widthsMain * -1 ;
-            hboxMain.Widths = widthsRelative;
-            
-            %%%% Callbacks %%%%
+            hboxMain.Widths = -widthsMain;
+
             obj.edtSteps.Callback = @(h,e) obj.edtStepSizeCallback();
             obj.btnMoveToBlue.Callback = @(h,e) obj.btnMoveToBlueCallback();
-            obj.isBlueMovingAvailable = false; % By default
-            
+            obj.isBlueMovingAvailable = false;
             for i = 1:3
                 obj.tvCurB(i).Callback = @(h,e) obj.tvCurBCallback(i);
                 obj.edtCurB(i).Callback = @(h,e) obj.checkEdtCurBValue(i);
-                
-                isLeft = true;
-                obj.btnMoveLeft(i).Callback = @(h,e) obj.btnMoveCallback(i, isLeft);
-                obj.btnMoveRight(i).Callback = @(h,e) obj.btnMoveCallback(i, ~isLeft);
+                obj.btnMoveLeft(i).Callback = @(h,e) obj.btnMoveCallback(i, true);
+                obj.btnMoveRight(i).Callback = @(h,e) obj.btnMoveCallback(i, false);
             end
-            
-            
-            %%%% Internal values %%%%
+
             obj.width = sum(widthsMain) + (hboxMain.Spacing -3) * length(widthsMain);
             obj.height = vboxLeftHeightTotal;
-            
             obj.refresh();
         end
-        
+
         function refresh(obj)
             obj.edtSteps.String = StringHelper.formatNumber(obj.helm.stepSize);
-            currentB = obj.helm.B;   
+            currentB = obj.helm.B;
             for i = 1:3
-                obj.tvCurB(i).String = StringHelper.formatNumber(currentB(i));
+                obj.tvCurB(i).String = sprintf('%.3f', currentB(i));
+                [lo, hi] = obj.helm.limits(obj.AXES{i});
+                obj.lowerLimLbl(i).String = ViewBsphereControl.fmtLim(lo);
+                obj.upperLimLbl(i).String = ViewBsphereControl.fmtLim(hi);
             end
-            obj.btnMoveToBlue.Enable = 'on';
-            drawnow % If we are in mid-operation
+            obj.panelMain.Title = sprintf('Cartesian (Gauss)  [%s]', obj.helm.frameName);
+            obj.btnMoveToBlue.Enable = BooleanHelper.boolToOnOff(obj.isBlueMovingAvailable);
+            drawnow
         end
-        
+
         function edtStepSizeCallback(obj)
             stepSizeString = obj.edtSteps.String;
-            try
-                if ~ValidationHelper.isStringValueANumber(stepSizeString)
-                    error('Step size must be a valid number! Reverting.');
-                end
-            catch err
+            if ~ValidationHelper.isStringValueANumber(stepSizeString)
                 obj.edtSteps.String = StringHelper.formatNumber(obj.helm.stepSize);
-                EventStation.anonymousError(err.message);
+                EventStation.anonymousError('Step size must be a valid number! Reverting.');
             end
             obj.helm.stepSize = str2double(stepSizeString);
         end
-        
-        function btnMoveCallback(obj, index, trueForLeftFalseForRight)
-            step = BooleanHelper.ifTrueElse(trueForLeftFalseForRight,-1,1)*obj.helm.stepSize;
+
+        function btnMoveCallback(obj, index, isLeft)
+            step = BooleanHelper.ifTrueElse(isLeft, -1, 1) * obj.helm.stepSize;
             obj.helm.relativeBcartStep(index, step);
         end
-        
+
         function btnMoveToBlueCallback(obj)
-            isBeingGrayed = true;
-            for i = 1:3
-                obj.btnMoveLeft(i).Enable = 'off';
-                obj.recolor(obj.tvCurB(i),isBeingGrayed)
-                obj.btnMoveRight(i).Enable = 'off';
-            end
-            for i = 1:3
-                pos = obj.edtCurBValue(i); 
-                if pos ~= inf
-                    obj.helm.set(obj.AXES{i}, pos);
-                    obj.clearEdtCurB(i);
-                end 
-            end
-            isBeingGrayed = false;
-            for i = 1:3
-                obj.btnMoveLeft(i).Enable = 'on';
-                obj.recolor(obj.tvCurB(i),isBeingGrayed)
-                obj.btnMoveRight(i).Enable = 'on';
-            end
-            % We are now finished moving. Waiting for new Input.
+            target = obj.helm.B;
+            typed = obj.edtCurBValue ~= inf;
+            target(typed) = obj.edtCurBValue(typed);
+            for i = find(typed); obj.clearEdtCurB(i); end
             obj.isBlueMovingAvailable = false;
-            obj.btnMoveToBlue.Enable = 'off';
+            obj.helm.setB(target);
         end
-        
+
         function tvCurBCallback(obj, index)
-            limNeg = obj.helm.minMagneticField(index);
-            limPos = obj.helm.maxMagneticField(index);
-            if ValidationHelper.isStringValueInBorders(obj.tvCurB(index).String, limNeg, limPos)
-                obj.edtCurB(index).String = obj.tvCurB(index).String;
+            str = obj.tvCurB(index).String;
+            obj.tvCurB(index).String = sprintf('%.3f', obj.helm.B(index));
+            if obj.isSettable(index, str)
+                obj.edtCurB(index).String = str;
+                obj.edtCurBValue(index) = str2double(str);
                 obj.showEdtCurB(index, true);
-                obj.checkEdtCurBValue(index);
                 obj.isBlueMovingAvailable = true;
                 obj.refresh
-            else
-                EventStation.anonymousWarning('Position must be a number, and within limits! Current limits: [%d, %d]', limNeg, limPos)
             end
-            obj.tvCurB(index).String = obj.helm.B(index);
         end
-        
+
         function showEdtCurB(obj, index, shouldShow)
-            % Sets the view of the obj.edtCurPos edit-input
-            % shouldShow - boolean (logical) - the new state
-            % index - the index axis
             if shouldShow
                 obj.hboxCurB(index).Widths = [-1 -1];
             else
                 obj.hboxCurB(index).Widths = [-1 0];
             end
         end
-        
+
         function checkEdtCurBValue(obj, index)
-            % Checks that string in obj.edtCurB has a valid value.
-            % Reverts the value if not valid based on obj.edtCurBValue
-            % or updates obj.edtCurBValue based on the edt
-            limNeg = obj.helm.minMagneticField(index);
-            limPos = obj.helm.maxMagneticField(index);
-            if ValidationHelper.isStringValueInBorders(obj.edtCurB(index).String, limNeg, limPos)
-                obj.edtCurBValue(index) = str2double(obj.edtCurB(index).String);
-            elseif isempty(obj.edtCurB(index).String)
-                % Delete it
+            str = obj.edtCurB(index).String;
+            if isempty(str)
                 obj.clearEdtCurB(index);
-                % Make sure to update the button as well:
                 if all(obj.edtCurBValue == inf)
                     obj.isBlueMovingAvailable = false;
                     obj.btnMoveToBlue.Enable = 'off';
                 end
                 return
-            else
-                EventStation.anonymousWarning('Value must be a number between %d and %d! Reverting.', limNeg, limPos)
+            end
+            if obj.isSettable(index, str)
+                obj.edtCurBValue(index) = str2double(str);
             end
             obj.edtCurB(index).String = StringHelper.formatNumber(obj.edtCurBValue(index));
         end
-        
+
+        function ok = isSettable(obj, index, str)
+            ok = ValidationHelper.isStringValueANumber(str);
+            if ok; ok = obj.helm.checkLimits(obj.AXES{index}, str2double(str), 0); end
+            if ~ok
+                [lo, hi] = obj.helm.limits(obj.AXES{index});
+                EventStation.anonymousWarning('%s', sprintf(['%s must be a number the coils can ' ...
+                    'reach with the other two held: %s to %s G.'], obj.AXES{index}, ...
+                    ViewBsphereControl.fmtLim(lo), ViewBsphereControl.fmtLim(hi)));
+            end
+        end
+
         function clearEdtCurB(obj, index)
-            % Clears the GUI from the edit-input, also clears the
-            % value stored as a numeric value
             obj.edtCurB(index).String = '';
             obj.edtCurBValue(index) = inf;
             obj.showEdtCurB(index, false);
             set(gcf, 'CurrentObject', gcf);
-            % ^ removes the focus from the edt and sets the focus to the
-            % current figure itself
         end
-        
     end
 
     %% overridden from EventListener
     methods
-        % When events happen, this function jumps.
-        % event is the event sent from the EventSender
         function onEvent(obj, event)
             if event.isError ...
                     || isfield(event.extraInfo, Helmholtz.EVENT_STEP_SIZE_CHANGED) ...
-                    || isfield(event.extraInfo, Helmholtz.EVENT_MAGNETIC_FIELD_CHANGED)
+                    || isfield(event.extraInfo, Helmholtz.EVENT_MAGNETIC_FIELD_CHANGED) ...
+                    || isfield(event.extraInfo, Helmholtz.EVENT_CALIBRATION_CHANGED)
                 obj.refresh();
             end
         end
     end
-    
-    
 end

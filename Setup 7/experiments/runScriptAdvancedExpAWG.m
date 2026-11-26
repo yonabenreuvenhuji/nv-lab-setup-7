@@ -13,7 +13,7 @@ jsonLocation = P.json;
 currentPath  = [P.folder filesep];
 
 h = Helmholtz;
-h.load(P.helmholtz);
+h.load(P.json);              % the "Helmholtz" block of expProperties.json (falls back to an old helmholtzState.mat)
 h.control('auto');
 % 
 

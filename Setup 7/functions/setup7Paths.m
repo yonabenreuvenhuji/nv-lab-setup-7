@@ -38,7 +38,11 @@ function p = setup7Paths(which)
 %   p.folder        ...\Setup 7\calibrations\results\<name>   (the one selected)
 %   p.name          <name>, e.g. '2026-08-14'
 %   p.json          ...\<name>\expProperties.json
-%   p.helmholtz     ...\<name>\helmholtzState.mat
+%   p.helmholtz     the same file as p.json: the Helmholtz state (currents, field, coil
+%                   calibration) is the "Helmholtz" block of expProperties.json now.
+%                   h.load(p.helmholtz) / h.save(p.helmholtz) work as before.
+%   p.helmholtzLegacy ...\<name>\helmholtzState.mat -- older folders; Helmholtz.load falls
+%                   back to it when the json has no "Helmholtz" block
 %   p.all           every results folder name found, newest last
 %
 % The dated folder names sort correctly as strings because they are YYYY-MM-DD. If anyone
@@ -79,8 +83,8 @@ function p = setup7Paths(which)
     end
     if ~isfolder(p.results)
         error(['setup7Paths: no results folder at\n    %s\n' ...
-               'Calibration outputs (expProperties.json, helmholtzState.mat) are expected ' ...
-               'in dated subfolders of it.'], p.results);
+               'Calibration outputs (expProperties.json) are expected in dated subfolders ' ...
+               'of it.'], p.results);
     end
 
     % ---- which results folder -------------------------------------------
@@ -121,15 +125,18 @@ function p = setup7Paths(which)
 
     p.folder    = fullfile(p.results, p.name);
     p.json      = fullfile(p.folder, 'expProperties.json');
-    p.helmholtz = fullfile(p.folder, 'helmholtzState.mat');
+    p.helmholtz = p.json;
+    p.helmholtzLegacy = fullfile(p.folder, 'helmholtzState.mat');
 
-    % helmholtzState is not required to exist -- level 0 to 2 run with the field off and
-    % never touch it -- so this warns rather than erroring. A calibration that needs it
+    % The Helmholtz state is not required to exist -- level 0 to 2 run with the field off
+    % and never touch it -- so this warns rather than erroring. A calibration that needs it
     % will fail on its own terms, with a message about the field rather than about paths.
-    if ~isfile(p.helmholtz)
+    hasBlock = contains(fileread(p.json), '"Helmholtz"');
+    if ~hasBlock && ~isfile(p.helmholtzLegacy)
         warning('setup7Paths:noHelmholtzState', ...
-                ['no helmholtzState.mat in %s. Levels 0-2 do not need it; levels 3 and 4 ' ...
-                 'do. Save one with h.save(setup7Paths().helmholtz).'], p.folder);
+                ['no Helmholtz state in %s (no "Helmholtz" block in expProperties.json, no ' ...
+                 'helmholtzState.mat). Levels 0-2 do not need it; levels 3 and 4 do. Save ' ...
+                 'one with h.save(setup7Paths().json).'], p.folder);
     end
 
     % ---- say which one, once per session ---------------------------------

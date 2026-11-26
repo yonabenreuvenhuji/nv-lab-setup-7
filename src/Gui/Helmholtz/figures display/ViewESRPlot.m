@@ -36,7 +36,7 @@ classdef ViewESRPlot < GuiComponent & EventListener
         function onEvent(obj, event)
             if event.isError ...
                     || isfield(event.extraInfo, Helmholtz.EVENT_MAGNETIC_FIELD_CHANGED) ...
-                    || isfield(event.extraInfo, Helmholtz.EVENT_DIAMOND_PROPERTIES_CHANGED)
+                    || isfield(event.extraInfo, Helmholtz.EVENT_CALIBRATION_CHANGED)
                 obj.refresh();
             end
         end

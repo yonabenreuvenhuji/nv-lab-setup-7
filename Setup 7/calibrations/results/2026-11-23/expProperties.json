@@ -22,5 +22,16 @@
 	"lastDelay": 0.050,
 	"referenceDetectionDuration": 3.15,
 	"detectionDuration": 3.15,
-	"tauPol": 12.76
+	"tauPol": 12.76,
+	"Helmholtz": {
+		"I": [3.43928755849, 2.9050140906, 1.70691266349],
+		"B": [18.1372456398, 23.5178832039, 25.418650944],
+		"frame": "nominal coil frame",
+		"Brho": 39.0916656796,
+		"Btheta": 49.4409059935,
+		"Bphi": 52.3602023114,
+		"flip": false,
+		"stepSize": 1,
+		"stepSizeI": 0.1
+	}
 }

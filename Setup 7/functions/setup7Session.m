@@ -1,5 +1,6 @@
 function [jsonLocation, h, awg, P] = setup7Session(resultsFolder)
-%SETUP7SESSION Start a Setup 7 session: main, calibration paths, Helmholtz, AWG settings.
+%SETUP7SESSION Start a Setup 7 session: main, calibration paths, Helmholtz (state and coil
+% calibration from expProperties.json), AWG settings.
 %
 %   [jsonLocation, h, awg, P] = setup7Session;                % newest calibration folder
 %   [jsonLocation, h, awg, P] = setup7Session('2026-08-14');  % pin an older one
@@ -19,7 +20,7 @@ function [jsonLocation, h, awg, P] = setup7Session(resultsFolder)
     jsonLocation = P.json;
 
     h = Helmholtz;
-    h.load(P.helmholtz);
+    h.load(P.json);     % "Helmholtz" block of expProperties.json: currents + coil calibration
     h.control('auto');
 
     awg = getObjByName('TektronixAWG');

@@ -34,7 +34,7 @@ classdef ViewCurrentControl < GuiComponent & EventListener
             obj.helm = getObjByName('Helmholtz');
             
             %%%% panel init %%%%
-            panelMain = uix.Panel('Parent', parent.component, 'Title', 'Current Control (Ampers)', 'Padding', 5);
+            panelMain = uix.Panel('Parent', parent.component, 'Title', 'Current Control (A)', 'Padding', 5);
             hboxMain = uix.HBox('Parent', panelMain, 'Spacing', 25, 'Padding', 0);
             vboxLeft = uix.VBox('Parent',hboxMain, 'Spacing', 6); % will contain the grid and "step"
             
@@ -213,9 +213,9 @@ classdef ViewCurrentControl < GuiComponent & EventListener
                 obj.isBlueMovingAvailable = true;
                 obj.refresh
             else
-                EventStation.anonymousWarning('Position must be a number, and within limits! Current limits: [%d, %d]', limNeg, limPos)
+                EventStation.anonymousWarning('Current must be a number within [%.3f, %.3f] A', limNeg, limPos)
             end
-            obj.tvCurB(index).String = obj.helm.B(index);
+            obj.tvCurB(index).String = StringHelper.formatNumber(obj.helm.I(index));
         end
         
         function showEdtCurB(obj, index, shouldShow)
@@ -247,7 +247,7 @@ classdef ViewCurrentControl < GuiComponent & EventListener
                 end
                 return
             else
-                EventStation.anonymousWarning('Value must be a number between %d and %d! Reverting.', limNeg, limPos)
+                EventStation.anonymousWarning('Current must be a number between %.3f and %.3f A! Reverting.', limNeg, limPos)
             end
             obj.edtCurB(index).String = StringHelper.formatNumber(obj.edtCurBValue(index));
         end
