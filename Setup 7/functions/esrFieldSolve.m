@@ -398,7 +398,8 @@ function report(out, c, opts, GAMMA, rngLo, rngHi)
                 numel(out.unmatched), opts.huberMHz);
         fprintf('    %.2f MHz\n', out.unmatched);
         fprintf(['    These are not NV transitions for this field. The resonator dip is the\n' ...
-                 '    usual candidate, and it is near 2820 on this setup.\n']);
+                 '    usual candidate (it moves: seen near 2820 and near 2763), though\n' ...
+                 '    esrFitRobust normally fits it separately -- see out.resonance.\n']);
     end
     seen = unique([out.matched.axis]);
     if numel(seen) < 4

@@ -1,8 +1,8 @@
 function out = calibFieldSurvey(opts)
 %CALIBFIELDSURVEY One wide ESR at the current field, and everything it can tell you.
 %
-%   out = calibFieldSurvey
-%   out = calibFieldSurvey(struct('freqs', 2780:2:2960, 'targetMHz', 2820))
+%   out = calibFieldSurvey                     % target: the resonance this sweep finds
+%   out = calibFieldSurvey(struct('freqs', 2740:2:2960, 'targetMHz', 2790))   % your own
 %
 % LEVEL 3, first step. Measures the field you already have rather than changing it, and
 % answers in one sweep: how well aligned you are, what |B| is in Gauss, whether the fit
@@ -130,8 +130,12 @@ function out = calibFieldSurvey(opts)
 %                average (true/false). Default [] = leave AWGExpESR's own setting (false
 %                on a fresh object unless the json sets it). Each average then pays one
 %                sequence upload; see AWGExpESR.newOrderEveryAverage.
-%   targetMHz    the frequency you want a line moved to (default 2820, the
-%                reflection minimum -- treat it as a hypothesis, see below)
+%   targetMHz    the frequency you want a line moved to. Default [] = the RESONANCE this
+%                sweep measured (out.resonance.centre, found by esrFitRobust), because that
+%                is where the resonator puts its power and it moves: it was 2820 when this
+%                default was a typed-in number, and has since been seen near 2763. With no
+%                resonance in the sweep and no targetMHz given, the coil-target section says
+%                so and is skipped. A number here always wins. out.target records which.
 %   whichLine    'aligned' or 'triple': which pair to move onto targetMHz
 %                (default 'aligned')
 %   baselineOrder passed to esrFitRobust (default 2)
@@ -185,7 +189,7 @@ function out = calibFieldSurvey(opts)
 
     if ~exist('opts', 'var'); opts = struct(); end
     opts = withDefaults(opts, struct('freqs', 2780:2:2960, 'amplitude', [], ...
-        'repeats', 50, 'averages', 3, 'detectionMHz', [], 'targetMHz', 2820, ...
+        'repeats', 50, 'averages', 3, 'detectionMHz', [], 'targetMHz', [], ...
         'whichLine', 'aligned', 'baselineOrder', 2, 'plotIt', true, ...
         'D0', 2870, 'dTol', 15, 'maxChi2', 10, 'pairTol', 3, 'minDepthSigma', 2.5, 'splitRatio', 1.8, 'splitGain', 0.9, 'seedCentres', [], ...
         'jsonLocation', '', ...
@@ -303,6 +307,9 @@ function out = calibFieldSurvey(opts)
             fprintf('\nFIT FAILED: %s\n', fit.why);
             restore(a, saved); return
         end
+
+        % ---- the target: the resonance this sweep just measured, unless one was given --
+        [opts, out] = resolveTarget(opts, out, fit);
 
         % ---- is the MODEL right, before trusting any number from it ----------
         % A reduced chi2 of 20 does not mean noisy data, it means the model is the wrong
@@ -685,6 +692,13 @@ function out = reportTarget(out, opts, sol, P, GAMMA)
 % it moves the off-axis pair means by 7 MHz. Since this number is what the coil actually
 % gets set from, it is solved by bisection on the exact Hamiltonian instead -- ask for the
 % |B| scaling that puts a line ON the target, and let the model include every term.
+    if isempty(opts.targetMHz) || ~isfinite(opts.targetMHz)
+        fprintf(['\n--- coil target: none ---\n' ...
+                 '  No resonance was found in this sweep and no targetMHz was given, so there is\n' ...
+                 '  no frequency to put a line on. Sweep across the resonator, or pass targetMHz,\n' ...
+                 '  for the coil scaling.\n']);
+        return
+    end
     if ~(isstruct(sol) && isfield(sol, 'ok') && sol.ok)
         if isempty(P); return; end
         [~, iBig] = max([P.splitting]);
@@ -738,10 +752,40 @@ function out = reportTarget(out, opts, sol, P, GAMMA)
                  '  still contaminated by its neighbours -- and the alignment itself changes\n' ...
                  '  which scaling is right.\n'], out.tiltDeg);
     end
-    fprintf(['\n  And treat %.0f MHz as a HYPOTHESIS: it came from the circulators'' reverse\n' ...
-             '  ports, which measure power failing to get INTO the antenna, not B1 at the NVs.\n' ...
-             '  A Rabi at two or three line positions settles it.\n'], opts.targetMHz);
+    if isfield(out, 'target') && strcmp(out.target.source, 'resonance')
+        fprintf(['\n  The target is the resonance THIS sweep measured (%.1f +- %.1f MHz): where the\n' ...
+                 '  resonator takes its power, so the best guess for the B1 maximum -- but a dip in\n' ...
+                 '  the ratio is not B1 itself. A Rabi at two or three line positions (calibB1Rabi)\n' ...
+                 '  settles it.\n'], opts.targetMHz, out.target.err);
+    else
+        fprintf(['\n  And treat %.0f MHz as a HYPOTHESIS unless it came from a Rabi: a typed-in\n' ...
+                 '  target goes stale (the resonator has moved from ~2820 to ~2763). Leave\n' ...
+                 '  targetMHz empty to use the resonance the sweep measures.\n'], opts.targetMHz);
+    end
     if ~isempty(P) && numel(P) >= 1 && GAMMA > 0; end
+end
+
+function [opts, out] = resolveTarget(opts, out, fit)
+% targetMHz empty -> the resonance esrFitRobust found in this sweep. The number used to be
+% typed in (2820, from the circulators' reverse ports), and the resonator does not stay
+% put: it has since been measured near 2763, so a fixed default would have walked the
+% field to a frequency the resonator had left.
+    R = fit.resonance;
+    out.target = struct('MHz', NaN, 'err', NaN, 'source', 'none', 'outside', false);
+    if ~isempty(opts.targetMHz)
+        out.target.MHz = opts.targetMHz; out.target.source = 'given';
+    elseif R.found
+        opts.targetMHz = R.centre;
+        out.target = struct('MHz', R.centre, 'err', R.centreErr, 'source', 'resonance', ...
+                            'outside', R.outside);
+        fprintf('\n  coil target: the resonance at %.1f +- %.1f MHz (FWHM %.0f), measured in this sweep\n', ...
+                R.centre, R.centreErr, R.fwhm);
+        if R.outside
+            fprintf(['  NOTE its centre lies OUTSIDE the sweep, extrapolated from the edge: extend\n' ...
+                     '  the sweep past it to pin the target down.\n']);
+        end
+    end
+    out.opts.targetMHz = opts.targetMHz;
 end
 
 function [f, v, e] = unpackReplay(r)
