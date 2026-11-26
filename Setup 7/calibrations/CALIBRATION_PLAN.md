@@ -9,7 +9,7 @@ renumbering, the Rabi-based B1 and microwave calibrations, and the move out of
 ```
 Setup 7\
   functions\        library code. On the MATLAB path, and everything below may call it.
-                    setup7Paths  rabiFitRobust  esrFitRobust  esrMultiLineFit
+                    setup7Paths  rabiFitRobust  esrFitRobust  esrFieldSolve
                     walkReduce  ratioAcrossAverages
   experiments\      runScriptBasicExpAWG.m, runScriptAdvancedExpAWG.m
     _diagnostics\   probes and offline tests. Nothing here decides a calibrated value.
@@ -130,7 +130,10 @@ not exist: the off-axis pair is pushed up 7–8 MHz at 45 G by the second-order 
 shift while its splitting barely moves. Neither had a symptom you could see in a spectrum.
 
 `calibFieldSurvey` solves `[Bx By Bz D]` from the line centres via the exact 3×3 Hamiltonian.
-Lines are never paired by hand, for the reason just given.
+Lines are never paired by hand, for the reason just given. The line fitting itself — the
+mirror / split / physics-seeded refits, and keeping the resonator's own dip out of the line
+list — is `esrFitRobust`, the same call the run script uses. For a look at the field without
+the calibration's coil-target report, `esrFitRobust(struct('exp', a))` alone is enough.
 
 `calibFieldAlign` scans θ and φ. Its metric is the **squared excess span of the inner pair,
 not the tilt**: below about 2.5° the tilt estimate collapses toward zero because the off-axis
@@ -234,7 +237,7 @@ frequency comes from `calibB1Rabi`, which uses the NVs as the probe.
 | Use | Not | Why |
 |---|---|---|
 | `rabiFitRobust` | `rabiFit`, `ourRabiFit` | the old fit's amplitude start is 2× the truth with the truth as its lower bound, so `a` pins at the bound; the frequency starts from a guess. The new one scans frequency exhaustively — no start point to get wrong. |
-| `esrFitRobust` → `esrMultiLineFit` | `ESRfit` | N Lorentzians on a **shared** baseline with the centre covariance exposed. Splittings are differences of centres, so var = C₁₁ + C₂₂ − 2C₁₂ and the cross term is not optional; `confint`, which the old path uses, does not expose covariance at all. |
+| `esrFitRobust`, the only ESR fitter | `ESRfit`; the retired `esrMultiLineFit`, `esrHyperfineFit`, `esrLineFit` | N Lorentzians on a **shared** baseline with the centre covariance exposed. Splittings are differences of centres, so var = C₁₁ + C₂₂ − 2C₁₂ and the cross term is not optional; `confint`, which the old path uses, does not expose covariance at all. The same call fits the microwave resonator's own dip as a separate component (it moves — seen near 2820 and near 2763 MHz — so it is detected, never looked up), solves the field (\|B\|, tilt from the aligned axis, D) from three or more lines, and tests a single narrow line for the 14N/15N hyperfine. |
 | own extraction | `extract1Ddata`, `extractESRdata` | `extract1Ddata` cuts the ratio across averages at 5, then 3, then **one** standard deviation. A one-sigma cut discards about a third of good Gaussian data, after two harsher passes have shrunk the spread it measures against, and it biases survivors toward the mean — so every error bar downstream is too small. `extractESRdata` is a four-line wrapper around it. |
 
 Both robust fits report R² **next to the ceiling the noise imposes**, `1 − Σe²/Σ(y−ȳ)²`.

@@ -87,9 +87,20 @@ function out = calibFieldSurvey(opts)
 % per-frequency amplitude flattening, and calibResonator showed that is NOT AVAILABLE:
 % no reflection standard, so the table came out with |Gamma| > 1 and +156 dB entries.
 %
-% What replaces it: esrMultiLineFit with baselineOrder 2, so the envelope's curvature
+% What replaces it: esrFitRobust with baselineOrder 2, so the envelope's curvature
 % across a 200 MHz sweep is absorbed by the baseline rather than by the line centres,
 % plus the pair-mean check above as an independent readout of whatever bias is left.
+%
+% ===================================================================
+% WHAT esrFitRobust DOES FOR THIS, AND WHAT IS LEFT HERE
+% ===================================================================
+%
+% The line fit, the resonator's own dip (fitted as its own component and kept out of the
+% lines -- it moves, so it is detected, not looked up), the mirror / split / physics-seeded
+% refits, the field solve and the figure all live in esrFitRobust; one ESR fitter for the
+% whole setup. This file keeps what only a survey needs: running the sweep, the detailed
+% field-solve report, the mirror-pair cross-check and alignment knob, the sum-rule and
+% second-order checks, and the coil scaling that puts a line on targetMHz.
 %
 % ===================================================================
 % OPTIONS (struct fields, all optional)
@@ -123,7 +134,7 @@ function out = calibFieldSurvey(opts)
 %                reflection minimum -- treat it as a hypothesis, see below)
 %   whichLine    'aligned' or 'triple': which pair to move onto targetMHz
 %                (default 'aligned')
-%   baselineOrder passed to esrMultiLineFit (default 2)
+%   baselineOrder passed to esrFitRobust (default 2)
 %   plotIt       (default true)
 %   D0, dTol     the zero-field splitting is known: D = 2870 MHz to within a few MHz
 %                of temperature drift. Any pairing whose mean lands further than dTol
@@ -135,7 +146,9 @@ function out = calibFieldSurvey(opts)
 %                this of the mirror position 2*D - f (default 3, and D is estimated
 %                from the outermost pair rather than assumed). Otherwise the mirror
 %                position is seeded into the fit as a missing line.
-%   minDepthSigma passed to esrMultiLineFit for the seeded refits (default 2.5)
+%   minDepthSigma passed to esrFitRobust as refineDepthSigma, the depth test for the
+%                seeded refits (default 2.5)
+%   physicsSeed, huberMHz   passed to esrFitRobust (defaults true, 6)
 %   splitRatio   try splitting a line wider than this times the narrowest (default 1.8).
 %                Two lines of one orientation share an intrinsic width, so a line much
 %                wider than the narrowest is either a blend or envelope distortion.
@@ -246,7 +259,7 @@ function out = calibFieldSurvey(opts)
 
         % A sanity check on the data before anything is inferred from it. Point-to-point
         % scatter against the claimed error bars: if they disagree by a lot, every
-        % uncertainty below inherits it. esrMultiLineFit's Birge scaling corrects the
+        % uncertainty below inherits it. esrFitRobust's Birge scaling corrects the
         % SCALE, but a factor this large is worth seeing.
         scatter = 1.4826*median(abs(diff(v)))/sqrt(2);
         % median(e(isfinite(e))) rather than median(e,'omitnan') so the same file runs
@@ -264,23 +277,32 @@ function out = calibFieldSurvey(opts)
                     max(out.scatterRatio, 1/out.scatterRatio));
         end
 
-        % ---- fit every line ------------------------------------------------
+        % ---- the lines, the resonance and the field: esrFitRobust ---------------
+        % One call does what this section used to do by hand: the joint line fit, the
+        % resonator's own dip fitted as its own component and kept OUT of the lines (it
+        % used to be fitted as one, and once paired with the real line at D to report
+        % 8.26 G with the field off), the mirror / split / physics-seeded refits that
+        % recover missed and blended lines, and the Hamiltonian field solve. The refits are
+        % forced on (refine = true) so a narrow window is treated as it always was here.
+        %
         % seedCentres, when given, starts the fit from known line positions instead of
         % searching for them. During an angle scan the previous point's lines are only a
         % few MHz away, so every fit becomes a small refinement rather than a fresh search
         % from a peak-finder that can and does fail on a marginal line.
-        fit = esrMultiLineFit(f, v, e, struct('baselineOrder', opts.baselineOrder, ...
-                    'plot', opts.plotIt, 'name', 'field survey', ...
-                    'seedCentres', opts.seedCentres, 'maxLines', 10));
+        fit = esrFitRobust(struct('f', f, 'y', v, 'e', e, ...
+                    'baselineOrder', opts.baselineOrder, 'seedCentres', opts.seedCentres, ...
+                    'maxLines', 10, 'D0', opts.D0, 'dTol', opts.dTol, ...
+                    'huberMHz', opts.huberMHz, 'refine', true, 'pairTol', opts.pairTol, ...
+                    'refineDepthSigma', opts.minDepthSigma, 'splitRatio', opts.splitRatio, ...
+                    'splitGain', opts.splitGain, 'widthGain', opts.widthGain, ...
+                    'physicsSeed', opts.physicsSeed, 'verboseRefine', opts.verboseRefine, ...
+                    'plotIt', opts.plotIt, 'verbose', true, 'name', 'field survey'));
         out.fit = fit;
+        out.resonance = fit.resonance;
         if ~fit.ok
             fprintf('\nFIT FAILED: %s\n', fit.why);
             restore(a, saved); return
         end
-        c  = [fit.lines.centre];  ce = [fit.lines.centreErr];
-        w  = [fit.lines.fwhm];    we = [fit.lines.fwhmErr];
-        dp = [fit.lines.depth];
-        n  = fit.nLines;
 
         % ---- is the MODEL right, before trusting any number from it ----------
         % A reduced chi2 of 20 does not mean noisy data, it means the model is the wrong
@@ -288,180 +310,14 @@ function out = calibFieldSurvey(opts)
         % error, which makes them look honest while the CENTRES stay biased.
         if isfinite(fit.chi2Reduced) && fit.chi2Reduced > opts.maxChi2
             fprintf(['\n  reduced chi2 = %.1f, so the model is imperfect (errors scaled %.2fx\n' ...
-                     '  to cover it). Usually the resonator envelope, or a line the finder\n' ...
-                     '  merged with its neighbour. The mirror-seeding below is the fix for the\n' ...
-                     '  second; narrow-window refits are the fix for the first.\n'], ...
-                    fit.chi2Reduced, fit.birge);
-        end
-
-        % ---- MIRROR-SEEDING: use the symmetry to find lines the fit missed ----
-        % Every orientation gives a PAIR straddling D, so a line at f REQUIRES a partner
-        % at 2D - f. D is known, so this adds no free parameter -- it is physics supplying
-        % a start point. It exists because the first run of this script found one line
-        % near 2894 where the data plainly showed two, and separately threw away a real
-        % line at 2803 whose partner at 2938 sat right where the symmetry says it should.
-        % Two distinct failures need two distinct repairs, and they interleave:
-        %
-        %   ASYMMETRIC OMISSION -- a line found with no partner. Mirror-seeding fixes it,
-        %       because D is known and the partner position is therefore known.
-        %   SYMMETRIC BLEND -- several lines merged into one, on BOTH sides, so the
-        %       spectrum still looks symmetric and mirror-seeding sees nothing wrong.
-        %       Only a width test finds it: a blend is much wider than a single line.
-        %       Split the widest line in two, refit, and keep it only if chi2 improves
-        %       materially. Splitting one side then breaks the symmetry, which the next
-        %       mirror pass repairs on the other side -- hence the interleaving.
-        for pass = 1:8
-            improved = false;
-            c = [fit.lines.centre]; w = [fit.lines.fwhm];
-
-            % --- mirror pass. D is ESTIMATED from the outermost pair, not assumed: that
-            % pair has the largest splitting so its centres are best determined and least
-            % blended. On the run this was built for the true D is 2870.94, and using the
-            % nominal 2870 puts every predicted partner 1.9 MHz out -- enough to make a
-            % genuinely missing line look like it is already there.
-            Dest = (min(c) + max(c))/2;
-            if abs(Dest - opts.D0) > opts.dTol; Dest = opts.D0; end
-            % SEED THE MIRROR OF EVERY LINE, not only of the unpaired ones.
-            %
-            % The narrower version only added a mirror when a line had NO partner, which
-            % fails on an asymmetric blend -- exactly what 45 G produced. The high side
-            % resolved into two lines at 2910.7 and 2924.8 while the low side merged into
-            % one 43 MHz blob at 2832.8. Because 2832.8 sat within tolerance of 2910.7's
-            % mirror it counted as "paired", so no seed was proposed for 2924.8's mirror at
-            % 2817.1 and the blob was never given the components it needed.
-            %
-            % Seeding every mirror lets the better-resolved side teach the worse one. A
-            % seeded line that is not really there fails its depth test and is dropped, so
-            % over-seeding costs a refit and nothing else.
-            missing = [];
-            for k = 1:numel(c)
-                mir = 2*Dest - c(k);
-                if mir >= min(f) && mir <= max(f) && min(abs(c - mir)) > opts.pairTol
-                    missing(end+1) = mir;                                   %#ok<AGROW>
-                end
-            end
-            allMir = 2*Dest - c;
-            allMir = allMir(allMir >= min(f) & allMir <= max(f));
-            cand = sort([c(:); allMir(:)]);
-            keepC = [true; diff(cand) > opts.pairTol];      % dedupe
-            cand = cand(keepC);
-            if numel(cand) > numel(c)
-                f2 = refit(f, v, e, cand, opts);
-                [take, why] = acceptRefit(fit, f2, opts);
-                if opts.verboseRefine
-                    fprintf('  pass %d mirror about D = %.2f, %d seeds (%s): %s\n', ...
-                            pass, Dest, numel(cand), sprintf('%.1f ', cand), ...
-                            describeRefit(fit, f2, take, why));
-                end
-                if take
-                    fit = f2; improved = true;
-                end
-            end
-
-            % --- split pass, on the widest line
-            c = [fit.lines.centre]; w = [fit.lines.fwhm];
-            [wMax, iw] = max(w);
-            if wMax > opts.splitRatio * min(w)
-                % Try TWO and THREE components. At 45 G the three off-axis orientations
-                % span ~22 MHz on each side, so a blend of all three is common and cutting
-                % it in two leaves a residual that a two-way split cannot remove -- the
-                % chi2 gain test then rejects the split and the blob survives intact.
-                best = []; bestChi = inf; bestN = NaN;
-                for nSub = [3 2]
-                    off = linspace(-wMax/2.5, wMax/2.5, nSub);
-                    seeds = c; seeds(iw) = [];
-                    seeds = sort([seeds(:); c(iw) + off(:)]);
-                    fc = refit(f, v, e, seeds, opts);
-                    [tk, wy] = acceptRefit(fit, fc, opts);
-                    if opts.verboseRefine
-                        fprintf(['  pass %d split %.1f MHz line at %.1f into %d ' ...
-                                 '(seeds %s): %s\n'], pass, wMax, c(iw), nSub, ...
-                                sprintf('%.1f ', c(iw) + off), ...
-                                describeRefit(fit, fc, tk, wy));
-                    end
-                    if tk && fc.chi2Reduced < bestChi
-                        best = fc; bestChi = fc.chi2Reduced; bestN = nSub;
-                    end
-                end
-                f2 = best;
-                if ~isempty(f2)
-                    fprintf(['  pass %d: accepted the %d-way split of the %.1f MHz line at ' ...
-                             '%.1f -> %d lines, chi2 %.1f -> %.1f, widest %.1f -> %.1f MHz\n'], ...
-                            pass, bestN, wMax, c(iw), f2.nLines, ...
-                            fit.chi2Reduced, f2.chi2Reduced, wMax, max([f2.lines.fwhm]));
-                    fit = f2; improved = true;
-                end
-            end
-            if ~improved; break; end
-        end
-
-        % ---- PHYSICS-SEEDED PASS: seed from the SOLVED FIELD, not from symmetry -----
-        % Mirror seeding uses one fact -- a pair straddles D. The field vector implies far
-        % more: three parameters (Bx, By, Bz) plus D fix ALL EIGHT line positions exactly.
-        % So fit the field to whatever lines are already resolved, ask it where the rest
-        % must be, and hand those positions to the fitter.
-        %
-        % This is what finally splits a blend. At 45 G the low side of this spectrum is one
-        % 44 MHz blob; mirror seeding can only propose the reflection of a resolved line, so
-        % it proposes at most as many components as the other side resolved -- and if the
-        % other side is also blended it proposes nothing useful. The field solution has no
-        % such limit: from the outer pair alone it predicts where all six inner lines sit,
-        % including the ones no side has resolved. On the measured 45 G sweep, the five
-        % resolved lines give |B| = 44.91 G and predict the missing components at 2830.3 and
-        % 2845.3 -- inside the blob, which is precisely the seed the fitter could not
-        % generate for itself.
-        %
-        % It is also self-checking: a seeded line that is not there fails its depth test and
-        % is dropped, and if the field solution is wrong its predictions land on noise and
-        % the refit is rejected by the same acceptance rule as everything else.
-        if opts.physicsSeed
-            for pass = 1:3
-                c = [fit.lines.centre];
-                sol = esrFieldSolve(c, [fit.lines.centreErr], ...
-                        struct('D0', opts.D0, 'dTol', opts.dTol, 'verbose', false, ...
-                               'sweepRange', [min(f) max(f)]));
-                if ~sol.ok
-                    if opts.verboseRefine
-                        fprintf('  pass %d physics seed: field solve failed (%s)\n', pass, sol.why);
-                    end
-                    break
-                end
-                seeds = sol.predicted(sol.predicted >= min(f) & sol.predicted <= max(f));
-                seeds = sort([seeds(:); sol.unmatched(:)]);
-                keepS = [true; diff(seeds) > opts.pairTol];
-                seeds = seeds(keepS);
-                f2 = refit(f, v, e, seeds, opts);
-                [take, why] = acceptRefit(fit, f2, opts);
-                if opts.verboseRefine
-                    fprintf(['  pass %d physics seed: |B| = %.2f G, tilt %.2f deg -> %d seeds ' ...
-                             '(%s): %s\n'], pass, sol.B, sol.tiltDeg, numel(seeds), ...
-                            sprintf('%.1f ', seeds), describeRefit(fit, f2, take, why));
-                end
-                if ~take; break; end
-                fit = f2;
-            end
-        end
-        out.fit = fit;
-
-        % The spectrum is drawn HERE, before the field solve, so it appears even if the
-        % solve fails -- but |B|, the tilt and D are not known yet, so the axes handle is
-        % kept and annotateSurvey fills them in once they are. That is the only reason this
-        % is two steps instead of one.
-        axSurvey = [];
-        if opts.plotIt
-            esrMultiLineFit(f, v, e, struct('baselineOrder', opts.baselineOrder, ...
-                'seedCentres', [fit.lines.centre], 'plot', true, 'name', 'field survey'));
-            axSurvey = gca;
+                     '  to cover it). Usually the resonator envelope, or a blend the refits\n' ...
+                     '  could not split. A narrow-window refit around the line in question is\n' ...
+                     '  the fix for both.\n'], fit.chi2Reduced, fit.birge);
         end
 
         c  = [fit.lines.centre];  ce = [fit.lines.centreErr];
         w  = [fit.lines.fwhm];    we = [fit.lines.fwhmErr];
         dp = [fit.lines.depth];   n  = fit.nLines;
-        fprintf('\n--- lines ---\n');
-        fprintf('%3s %12s %10s %10s %10s\n', '#', 'centre/MHz', '+/-', 'FWHM', 'depth/%');
-        for k = 1:n
-            fprintf('%3d %12.3f %10.3f %10.2f %10.3f\n', k, c(k), ce(k), w(k), 100*dp(k));
-        end
         out.lineCentres = c;
 
         % ---- THE FIELD, FROM THE EXACT HAMILTONIAN. This is the measurement. ----
@@ -483,8 +339,12 @@ function out = calibFieldSurvey(opts)
         %
         % The Hamiltonian fit has the shift built in, so each orientation is allowed its own
         % pair mean and the geometry supplies the relation between them. A feature that
-        % matches NO predicted transition -- the resonator dip is the candidate -- is
-        % reported as unmatched, which is what the mirror test was really trying to do.
+        % matches NO predicted transition is reported as unmatched, which is what the mirror
+        % test was really trying to do. (The resonator's own dip no longer reaches this
+        % list: esrFitRobust has already fitted it as the resonance, out.resonance.)
+        %
+        % esrFitRobust ran this same solve, quietly; it is repeated here with verbose on
+        % because the per-line assignment table is the survey's main report.
         sol = esrFieldSolve(c, ce, struct('D0', opts.D0, 'dTol', opts.dTol, ...
                     'huberMHz', opts.huberMHz, 'sweepRange', [min(f) max(f)], ...
                     'verbose', true));
@@ -577,7 +437,6 @@ function out = calibFieldSurvey(opts)
                      '  on its own -- it does not need pairs.\n']);
             out.pairs = [];
             out = finishNoPairs(out, opts, sol);
-            annotateSurvey(axSurvey, out, sol);
             restore(a, saved); return
         end
         c = cp; ce = cep; w = wp; dp = dpp; n = np;
@@ -798,115 +657,8 @@ function out = calibFieldSurvey(opts)
         restore(a, saved);
         rethrow(err);
     end
-    annotateSurvey(axSurvey, out, sol);
     restore(a, saved);
     fprintf('\n(no field setting was changed)\n');
-end
-
-% ======================================================================
-
-function annotateSurvey(ax, out, sol)
-%ANNOTATESURVEY Put the measurement on the figure: |B|, the tilt, D, and where each
-% orientation's pair is predicted to sit.
-%
-% The spectrum plot on its own showed the fit but none of the result, so the numbers had to
-% be read out of the printout and matched to the picture by eye. The whole point of the
-% survey is |B| and the tilt, so those belong in the title.
-%
-% The four orientations are NOT drawn as four equal categories. One of them is the aligned
-% axis -- the one every later calibration uses -- and the other three are the contamination
-% you are trying to get away from. Drawing that hierarchy (aligned emphasised, the rest
-% recessive grey) says more than four colours would, and it keeps identity off colour alone
-% since each pair is labelled with its own projection.
-%
-% Silent no-op when there is no figure, and wrapped so a plotting problem can never lose a
-% good measurement.
-    if isempty(ax) || ~all(ishandle(ax)); return; end
-    try
-        COL.aligned = [0.00 0.45 0.35];      % green: the axis that matters
-        COL.other   = [0.55 0.55 0.55];      % grey: the other three
-        hold(ax, 'on');
-        yl = ylim(ax);
-
-        haveSol = ~isempty(sol) && isstruct(sol) && isfield(sol, 'ok') && sol.ok;
-        alignedIdx = 1;
-        if haveSol && isfield(sol, 'alignedAxisIdx') && ~isempty(sol.alignedAxisIdx)
-            alignedIdx = sol.alignedAxisIdx;
-        end
-
-        hA = []; hO = [];
-        if haveSol && isfield(sol, 'means') && isfield(sol, 'splittings')
-            m = sol.means(:)'; sp = sol.splittings(:)';
-            for i = 1:min(numel(m), numel(sp))
-                isAligned = (i == alignedIdx);
-                if isAligned; c = COL.aligned; lw = 1.6; ls = '-';
-                else;         c = COL.other;   lw = 1.0; ls = ':';
-                end
-                for pos = m(i) + [-1 1]*sp(i)/2
-                    hh = plot(ax, pos*[1 1], yl, ls, 'Color', c, 'LineWidth', lw);
-                    if isAligned && isempty(hA); hA = hh;
-                    elseif ~isAligned && isempty(hO); hO = hh;
-                    else; set(hh, 'HandleVisibility', 'off');
-                    end
-                end
-                % Label each pair with its own projection, so identity is never colour alone.
-                if isfield(sol, 'projections') && numel(sol.projections) >= i
-                    txt = sprintf(' %+.1f G', sol.projections(i));
-                    if isAligned; txt = sprintf(' ALIGNED %+.1f G', sol.projections(i)); end
-                    text(ax, m(i) + sp(i)/2, yl(2), txt, 'Color', c, 'FontSize', 8, ...
-                         'VerticalAlignment', 'top', 'Rotation', 90);
-                end
-            end
-            ylim(ax, yl);
-        end
-
-        % ---- the title carries the measurement ----
-        if isfinite(out.B) && isfinite(out.tiltDeg)
-            t = sprintf('field survey:   |B| = %.2f G     tilt = %.2f deg', out.B, out.tiltDeg);
-            if isfield(out, 'D') && isfinite(out.D)
-                t = sprintf('%s     D = %.2f MHz', t, out.D);
-            end
-        else
-            t = 'field survey:   field NOT solved -- see the printout';
-        end
-        title(ax, t, 'FontWeight', 'bold');
-
-        % Everything else that qualifies the number goes in the subtitle, which is where a
-        % reader looks after the headline: how well it fits, and how far off aligned it is.
-        bits = {};
-        if haveSol && isfield(sol, 'rms') && isfinite(sol.rms)
-            bits{end+1} = sprintf('line residual %.2f MHz', sol.rms);
-        end
-        if isfield(out, 'projections') && ~isempty(out.projections)
-            bits{end+1} = sprintf('projections %s G', ...
-                                  strtrim(sprintf('%+.1f ', out.projections)));
-        end
-        if isfinite(out.tiltDeg)
-            if out.tiltDeg > 2
-                bits{end+1} = 'ALIGN FIRST (tilt > 2 deg)';
-            else
-                bits{end+1} = 'aligned well enough to proceed';
-            end
-        end
-        if ~isempty(bits)
-            try
-                subtitle(ax, strjoin(bits, '   |   '));   % R2020b+
-            catch
-                % No subtitle on this release: fold it into the xlabel rather than lose it.
-                xlabel(ax, sprintf('%s        [%s]', get(get(ax,'XLabel'),'String'), ...
-                                   strjoin(bits, ' | ')));
-            end
-        end
-
-        if ~isempty(hA) || ~isempty(hO)
-            hs = {hA, hO};
-            ls = {'aligned pair (predicted)', 'other orientations (predicted)'};
-            keep = cellfun(@(h) ~isempty(h) && all(ishandle(h)), hs);
-            legend(ax, [hs{keep}], ls(keep), 'Location', 'southeast', 'Box', 'off');
-        end
-    catch err
-        fprintf('  (could not annotate the survey plot: %s)\n', err.message);
-    end
 end
 
 % ======================================================================
@@ -992,67 +744,6 @@ function out = reportTarget(out, opts, sol, P, GAMMA)
     if ~isempty(P) && numel(P) >= 1 && GAMMA > 0; end
 end
 
-function [take, why] = acceptRefit(fit, f2, opts)
-% Decide whether a seeded refit replaces the current fit, and SAY WHY EITHER WAY.
-%
-% Three ways in, because "did it get better" means three different things here:
-%
-%   MORE LINES, not worse. A recovered component is the point of the exercise. But
-%       "more lines" alone was the old mirror-pass rule, and that would accept an
-%       invented line that made the fit worse, so chi2 must not degrade materially.
-%
-%   FEWER PARAMETERS FIT NO WORSE -- never accepted. Not our business here.
-%
-%   SAME LINES, materially better chi2. splitGain, as before.
-%
-%   THE WIDEST LINE GOT NARROWER. This is the criterion that was missing, and it is
-%       the one that matters for a blend. Splitting a 44 MHz blob into two 12 MHz
-%       lines barely moves reduced chi2 -- the blob already absorbs most of the
-%       deficit, and the residual it leaves is a few tenths of a percent spread over
-%       30 points against a chi2 already inflated to 2.1 by the envelope. So a
-%       chi2-only test rejects a split that is obviously right when you look at the
-%       widths: an NV line here is 7.5 to 15 MHz FWHM, and nothing physical is 44.
-%       Requiring the widest FWHM to fall to widthGain of its old value, with chi2 not
-%       degrading, accepts exactly that case and nothing else.
-    take = false;
-    if isempty(f2) || ~isstruct(f2) || ~isfield(f2, 'ok') || ~f2.ok
-        if isstruct(f2) && isfield(f2, 'why') && ~isempty(f2.why)
-            why = sprintf('fit failed (%s)', f2.why);
-        else
-            why = 'fit failed';
-        end
-        return
-    end
-    chi0 = fit.chi2Reduced;  chi1 = f2.chi2Reduced;
-    w0 = max([fit.lines.fwhm]); w1 = max([f2.lines.fwhm]);
-    if f2.nLines > fit.nLines && chi1 < 1.05*chi0
-        take = true; why = sprintf('gained %d line(s)', f2.nLines - fit.nLines);
-    elseif w1 < opts.widthGain*w0 && chi1 < 1.05*chi0
-        take = true; why = sprintf('widest line %.1f -> %.1f MHz', w0, w1);
-    elseif f2.nLines == fit.nLines && chi1 < opts.splitGain*chi0
-        take = true; why = sprintf('chi2 %.2f -> %.2f', chi0, chi1);
-    elseif f2.nLines > fit.nLines
-        why = sprintf('gained %d line(s) but chi2 %.2f -> %.2f is worse', ...
-                      f2.nLines - fit.nLines, chi0, chi1);
-    elseif f2.nLines < fit.nLines
-        why = sprintf('LOST %d line(s) -- the seeded component did not survive its %.1f-sigma depth test', ...
-                      fit.nLines - f2.nLines, opts.minDepthSigma);
-    else
-        why = sprintf('no gain: %d lines, chi2 %.2f -> %.2f, widest %.1f -> %.1f MHz', ...
-                      f2.nLines, chi0, chi1, w0, w1);
-    end
-end
-
-function s = describeRefit(~, f2, take, why)
-    if isstruct(f2) && isfield(f2, 'ok') && f2.ok
-        if take; verdict = 'ACCEPTED'; else; verdict = 'rejected'; end
-        s = sprintf('%d lines, chi2 %.2f, widest %.1f MHz -- %s (%s)', ...
-                    f2.nLines, f2.chi2Reduced, max([f2.lines.fwhm]), verdict, why);
-    else
-        s = sprintf('REJECTED (%s)', why);
-    end
-end
-
 function [f, v, e] = unpackReplay(r)
 % Pull a swept spectrum out of whatever the caller handed over: an ESR EXPERIMENT, the
 % output struct of a previous calibFieldSurvey, a bare struct with the three vectors, or a
@@ -1067,21 +758,6 @@ function [f, v, e] = unpackReplay(r)
 % verbose is off: a survey prints its own report and does not need a line about error bars
 % in the middle of it.
     [f, v, e] = esrPullData(r, struct('verbose', false, 'name', 'calibFieldSurvey replay'));
-end
-
-function val = pickField(s, names)
-    val = [];
-    for k = 1:numel(names)
-        if isfield(s, names{k}) && ~isempty(s.(names{k})) && isnumeric(s.(names{k}))
-            val = s.(names{k}); return
-        end
-    end
-end
-
-function o = refit(f, v, e, seeds, opts)
-    o = esrMultiLineFit(f, v, e, struct('baselineOrder', opts.baselineOrder, ...
-            'seedCentres', seeds, 'minDepthSigma', opts.minDepthSigma, ...
-            'maxLines', 12, 'minSepMHz', 3));
 end
 
 function [B, tiltDeg, bestSign, closure, pFull] = solveProjections(pAbs, GAMMA) %#ok<INUSD>
@@ -1134,25 +810,6 @@ function [B, tiltDeg, bestSign, closure, pFull] = solveProjections(pAbs, GAMMA) 
     end
     B = sqrt(3/4 * sum(pFull.^2));
     tiltDeg = acosd(min(max(max(abs(pFull))/max(B, eps), 0), 1));
-end
-
-function zeroFieldHint(c, dp, w, opts)
-% When the pairing is refused, say whether the spectrum looks like ZERO FIELD rather
-% than leaving the user with only a complaint. The signature is one line that both sits
-% at D and dominates everything else in depth: at zero field all four orientations are
-% degenerate, so the real line is several times deeper than any artefact.
-    [~, iDeep] = max(dp);
-    others = dp; others(iDeep) = [];
-    dominates = isempty(others) || dp(iDeep) > 2*max(others);
-    if abs(c(iDeep) - opts.D0) <= opts.dTol && dominates
-        fprintf(['\n    This looks like ZERO FIELD: the dominant line is at %.2f MHz, which is\n' ...
-                 '    D, and it is %.1fx deeper than anything else in the sweep. At zero field\n' ...
-                 '    all four orientations are degenerate there, and the shallower broad\n' ...
-                 '    features are the resonator envelope rather than split lines.\n' ...
-                 '    Useful anyway: D = %.2f MHz, FWHM = %.2f MHz, contrast = %.2f%%.\n' ...
-                 '    Turn the field ON and re-run.\n'], ...
-                c(iDeep), dp(iDeep)/max([others eps]), c(iDeep), w(iDeep), 100*dp(iDeep));
-    end
 end
 
 function a = makeExp(opts)

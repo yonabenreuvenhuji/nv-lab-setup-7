@@ -240,11 +240,15 @@ a.driveMWSwitches = true;       % normal operation; false is a switch diagnostic
 
 tId = tic; a.run;
 fprintf('ESR: %.1f s, %d SCPI commands\n', toc(tId), a.AWG.commandCount);
-% esrFitRobust, not ESRfit. Same first five outputs so it is a drop-in, but the fitting is
-% esrMultiLineFit -- N Lorentzians on a shared baseline, seeded from a robust envelope, with
-% an explicit covariance -- and the extraction does not go through extract1Ddata, whose
-% three successive cuts at 5, 3 and ONE standard deviation discard about a third of good
-% Gaussian data and shrink every error bar downstream.
+% esrFitRobust, the one ESR fitter: N Lorentzians on a shared baseline with an explicit
+% covariance, extraction through esrPullData rather than extract1Ddata (whose 5, 3 and ONE
+% sigma cuts discard a third of good data and shrink every error bar).
+%
+% With the field off a SECOND dip shows up -- the microwave resonator's own, not an NV line,
+% and it moves (it has been seen near 2820 and near 2763). esrFitRobust finds it and fits it
+% as its own component (o.resonance, the dashed curve on the plot), so nLines = 1 counts the
+% NV line at D only; the resonance can no longer take that slot or bend the baseline under
+% it. The title reads 'zero field' when one line sits at D.
 o = esrFitRobust(struct('exp', a, 'nLines', 1));
 
 %% ESR, with field  --  the four-orientation spectrum
@@ -278,17 +282,21 @@ a.driveMWSwitches = true;
 tId = tic; a.run;
 fprintf('ESR: %.1f s, %d SCPI commands\n', toc(tId), a.AWG.commandCount);
 
-% Two options here, and they answer different questions.
+% One call, everything: every line fitted at once with the centre covariance (splittings
+% need it), the resonator's dip separated out if it is in the sweep, blended lines split by
+% the mirror / physics-seeded refits, and the field vector solved from the exact Hamiltonian
+% -- |B|, the tilt from the aligned axis and D in the title, the aligned-axis lines drawn in
+% green. Use it rather than eyeballing which dip is which: at 15-20 G no single D pairs all
+% four orientations, because the off-axis pairs are pushed up 7-8 MHz by the second-order
+% transverse shift while their splittings barely move.
 %
-% Just the lines: esrFitRobust fits every line at once and gives centres with their
-% covariance, which is what splittings need.
-o = esrFitRobust(struct('exp', a, 'baselineOrder', 2));
-
-% The lines AND the field vector: calibFieldSurvey solves [Bx By Bz D] from those centres
-% via the exact Hamiltonian. Use it rather than eyeballing which dip is which -- at 15-20 G
-% no single D pairs all four orientations, because the off-axis pair is pushed up 7-8 MHz by
-% the second-order transverse shift while its splitting barely moves.
-sv = calibFieldSurvey(struct('replay', a));
+%   o.B, o.tiltDeg, o.D       the field          o.lines        the NV lines
+%   o.field.aligned           which lines are    o.resonance    the resonator's dip
+%                             the aligned axis
+%
+% calibFieldSurvey is for the calibration chain (it adds the coil scaling that puts a line on
+% target); it is not needed here.
+o = esrFitRobust(struct('exp', a));
 %% 
 h.control('auto');
 
@@ -303,6 +311,9 @@ p.useSequenceWalk      = true;             % one sequence, one arm per pg.run
 p.newOrderEveryAverage = true;
 %p.plotPulsedSequence()
 p.run;
+% One line on a fine grid, so esrFitRobust also tests it for the 14N triplet on its own
+% (o.hyperfine; the pulse length is read from p, so the pulse line shape is tried too).
+o = esrFitRobust(struct('exp', p));
 
 %% 
 out = esrPulsedVsCwCompare;

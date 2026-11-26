@@ -105,8 +105,8 @@ New files:
    |---|---|
    | Instrument Control | `visadev` (Tektronix AWG); `calibResonator`, `scopeProbe` |
    | Data Acquisition **+ its NI-DAQmx support package** | `NiDaq` (`daq.ni.NIDAQmx`) |
-   | Statistics and Machine Learning | `range()` in the AWG driver; `esrLineFit`, `fitStd` |
-   | Curve Fitting | `fit()` in `ESRfit`, `rabiFit`, `calibLaserSaturation`, `esrLineFit` |
+   | Statistics and Machine Learning | `range()` in the AWG driver; `fitStd` |
+   | Curve Fitting | `fit()` in `ESRfit`, `rabiFit`, `calibLaserSaturation` |
    | Signal Processing | `findpeaks` in `rabiFit` |
    | Mapping | `extractfield` in `PathHelper`, which builds the GUI's experiment list at startup |
    | Phased Array System | `rotx`/`roty`/`rotz` in `Helmholtz` |

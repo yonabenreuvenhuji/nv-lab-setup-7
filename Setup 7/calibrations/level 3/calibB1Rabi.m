@@ -408,7 +408,7 @@ function out = calibB1Rabi(opts)
                     % THE WINDOW IS SIZED FROM THE LINEWIDTH WE JUST MEASURED, not from a
                     % constant. A window only a little wider than the line is wrong twice
                     % over: the fitter's baseline has no clean wings to sit on, so it eats
-                    % part of the line; and esrMultiLineFit rejects a component whose FWHM
+                    % part of the line; and esrFitRobust rejects a component whose FWHM
                     % exceeds the span, which is the correct test but bites hard when the
                     % span is small. A fixed +/- 15 MHz did exactly this on a 12 MHz line --
                     % the fit found the dip at the predicted frequency with a sensible depth
@@ -834,12 +834,12 @@ function p = measureAt(h, rho, freqs, rel, tag, opts)
     else
         % Coarse: the line the FIELD FIT assigned to the lower aligned transition, not simply
         % the lowest fitted centre. The resonator's own response at the low edge of the sweep
-        % gets fitted as a broad "line" (2767 MHz, FWHM 33, at Brho 31.5 on setup 7) below the
-        % real aligned line at 2786. The field fit leaves it unmatched, which is correct --
-        % but taking min([L.centre]) picked it anyway, and the whole point was then rejected
-        % as "not the aligned orientation" with the right line sitting in the fit. Same fix as
-        % calibFieldAlign: identify the line by physics, fall back to position only when the
-        % field fit did not converge (and the gate below then rejects it, as before).
+        % used to be fitted as a broad "line" (2767 MHz, FWHM 33, at Brho 31.5 on setup 7)
+        % below the real aligned line at 2786, and min([L.centre]) picked it. esrFitRobust now
+        % recognises that dip as the resonance and keeps it out of L (sv.resonance), so this
+        % is the SECOND guard rather than the only one: identify the line by physics, fall
+        % back to position only when the field fit did not converge (and the gate below then
+        % rejects it, as before). Same rule as calibFieldAlign.
         [~, iPick] = min([L.centre]);
         iAl = alignedLowerLine(L, sv);
         if ~isempty(iAl) && iAl ~= iPick
@@ -1520,7 +1520,7 @@ function [halfLo, halfHi, gap] = narrowWindow(fPred, rel, opts)
 %
 % esrNarrowHalf is a FLOOR:  want = max(esrNarrowHalf, narrowHalfFwhmFactor*fwhm).  Setting
 % it to 7 changes nothing when 2.5 linewidths is 30, which is the whole point of the floor --
-% a window narrower than the line gets the line rejected as baseline by esrMultiLineFit's own
+% a window narrower than the line gets the line rejected as baseline by esrFitRobust's own
 % width test. So the fix is not a smaller floor, it is a CAP, and the cap has to come from
 % the neighbour rather than from a number typed in. esrNarrowHalfMax is there as a hard
 % override for when you want one anyway.
@@ -1556,7 +1556,7 @@ function [halfLo, halfHi, gap] = narrowWindow(fPred, rel, opts)
     elseif hardMax < fwhm
         warning('calibB1Rabi:narrowWindow', ...
                 ['esrNarrowHalfMax = %.1f MHz is narrower than the %.1f MHz linewidth. ' ...
-                 'esrMultiLineFit rejects a component whose FWHM exceeds the span, so ' ...
+                 'esrFitRobust rejects a component whose FWHM exceeds the span, so ' ...
                  'expect the line to be thrown out as baseline. This is what you asked for; ' ...
                  'leave esrNarrowHalfMax empty and let esrNeighbourGuard size it instead.'], ...
                 hardMax, fwhm);

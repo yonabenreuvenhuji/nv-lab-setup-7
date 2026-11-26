@@ -67,8 +67,7 @@ function out = esrPulsedVsCwCompare(opts)
 %               -> the MEASURED pi time; then the pulsed spectrum with that pi pulse ->
 %               width, contrast, sensitivity. Nothing is scaled: the range of each Rabi is
 %               placed from the previous measured one, and re-placed once if the fit shows
-%               fewer than 2 or more than 10 oscillations in it. At the longest pi, a 3-line
-%               fit tests whether the 2.16 MHz 14N hyperfine is resolved.
+%               fewer than 2 or more than 10 oscillations in it.
 %   3 walk      pulsed classic vs pulsed walk, same sweep, at piTime and at the narrowest
 %               line: correlation, contrast ratio, centre shift, wall-clock speed-up
 %   4 knobs     at the best tau, a FULL spectrum (the same sweep as stage 2) for each
@@ -93,6 +92,31 @@ function out = esrPulsedVsCwCompare(opts)
 % automatic re-run when the first sweep was too narrow or too coarse for the line it found.
 %
 % ======================================================================
+% THE HYPERFINE: THE SHARPEST TEST OF WHICH METHOD IS BETTER
+% ======================================================================
+% 14N splits every line into three, 2.16 MHz apart. Whether a method RESOLVES that triplet,
+% and at what contrast per line, is a cleaner verdict than any single width or sensitivity
+% number: it needs narrow lines AND contrast at the same time, which is exactly the trade
+% the two methods make differently. CW can only narrow its lines by lowering the power,
+% which costs contrast, and its optical broadening never goes away; pulsed narrows them by
+% lengthening the pulse at full contrast, until T2*.
+%
+% So EVERY CW and stage-2 pulsed spectrum is put through esrFitRobust's multiplet model:
+% 0, 1, 2 or 3 dips, shared width and shape, the spacing FITTED (1-5 MHz) and only then
+% compared with 2.16, chosen by BIC. Pulsed spectra are also offered the square-pulse
+% response (the pulse length is known), which separates the pulse's own width from the
+% inhomogeneous one. Per spectrum: the dip count and confidence, dBIC(3 vs 1 dip) -- a
+% continuous "how detectable" number, > 0 favours the triplet, > 10 is decisive -- the
+% splitting, the per-line FWHM and contrast, and eta_hf, the sensitivity on ONE hyperfine
+% line. The summary says at which CW powers and which pulse lengths / amplitudes the triplet
+% is resolved, and which method resolves it better.
+%
+% A sweep must sample 2.16 MHz to resolve it, so every stage 1/2 sweep gets at least one point
+% per hfStepMHz (0.5 MHz: ~4 points per spacing), up to hfMaxPoints. Same rule for both
+% methods, same sequence time per spectrum (fewer passes per point), so the comparison stays
+% fair; set hfStepMHz = 0 for the old fixed nPoints.
+%
+% ======================================================================
 % OPTIONS (struct fields, all optional)
 % ======================================================================
 %   jsonLocation   '' = setup7Paths().json
@@ -107,7 +131,10 @@ function out = esrPulsedVsCwCompare(opts)
 %   windows        us, stage 4 readout windows. [] = [0.3 0.6 1 1.5 2.5 4] (+ the json's)
 %   darks          us, stage 4 darkBeforeMW.    [] = [0.1 0.3 1 3]
 %   inits          us, stage 4 laser init.      [] = [5 10 20] + the json's
-%   nPoints        points per spectrum (default 41)
+%   nPoints        points per spectrum, at least (default 41)
+%   hfStepMHz      stage 1/2 sweeps get at least one point per this many MHz, so the 2.16
+%                  MHz hyperfine can be resolved (default 0.5; 0 = off)
+%   hfMaxPoints    cap on that (default 121)
 %   dataSeconds    sequence time per spectrum, the SAME for both methods (default 6)
 %   scanSeconds    sequence time per stage 4/5 spectrum (default 4)
 %   averages       default 3 (>= 2, so the error bars include drift)
@@ -122,6 +149,9 @@ function out = esrPulsedVsCwCompare(opts)
 % OUTPUT
 %   out.spectra    one entry per spectrum: method, setting, raw per-average traces, and
 %                  after analysis f0, fwhm, contrast, PL, refDip, eta_data, eta_wall, ...
+%                  and the hyperfine: hfNDips, hfIsotope, hfResolved, hfDbic31, hfA,
+%                  hfFwhm (per line), hfC (contrast per line), etaHf, ...
+%   out.model.hyperfine   where each method resolves the triplet, and its best spectrum
 %   out.knobs      stage 4/5 points
 %   out.model      the CW and pulsed physics fits
 %   out.best       best settings found for each method
@@ -131,7 +161,8 @@ function out = esrPulsedVsCwCompare(opts)
         'cwAmplitudes', [], 'pulseAmplitudes', [], 'rabiPeriods', 4, 'rabiPoints', 100, ...
         'rabiRepeats', 300, 'rabiAverages', 2, ...
         'windows', [], 'darks', [], 'inits', [], ...
-        'nPoints', 41, 'dataSeconds', 6, 'scanSeconds', 4, 'averages', 3, ...
+        'nPoints', 41, 'hfStepMHz', 0.5, 'hfMaxPoints', 121, ...
+        'dataSeconds', 6, 'scanSeconds', 4, 'averages', 3, ...
         'validateWalk', true, 'walkCheckTaus', [], 'knobs', true, 'piCheck', false, ...
         'maxDigitizerSamples', 4.8e6, 'quick', false, 'plot', true, 'save', true, 'data', []);
     if ~exist('opts', 'var') || isempty(opts); opts = struct(); end
@@ -224,7 +255,7 @@ function out = acquire(opts)
         amp = opts.cwAmplitudes(i);
         fprintf('\n--- [1.%d/%d] CW %g dBm ---\n', i, numel(opts.cwAmplitudes), amp);
         h0 = clamp(3*S.fwhmSurvey, 4, S.halfFree);
-        meas = @(h) runCw(S, opts, S.f0 + linspace(-h, h, opts.nPoints), amp, ...
+        meas = @(h) runCw(S, opts, S.f0 + linspace(-h, h, sweepPoints(h, opts)), amp, ...
                           sprintf('CW %g dBm', amp), opts.dataSeconds);
         [sp, out] = measureAdaptive(meas, h0, S, out);
         sp.setting = amp;
@@ -253,7 +284,7 @@ function out = acquire(opts)
         fprintf('   measured pi = %.1f +- %.1f ns at %.1f dBm -> pulsed spectrum with that pulse\n', ...
                 1e3*tau, 1e3*R.piErrUs, A);
         h0 = clamp(3*sqrt((0.8/tau)^2 + gInh^2), 4, S.halfFree);
-        meas = @(h) runPulsed(S, opts, S.f0 + linspace(-h, h, opts.nPoints), ...
+        meas = @(h) runPulsed(S, opts, S.f0 + linspace(-h, h, sweepPoints(h, opts)), ...
                     struct('tau', tau, 'amplitude', A), ...
                     sprintf('pulsed %.0f dBm pi %.0f ns', A, 1e3*tau), opts.dataSeconds);
         [sp, out] = measureAdaptive(meas, h0, S, out);
@@ -443,6 +474,22 @@ function printPlan(S, opts)
             mat2str(opts.pulseAmplitudes), opts.rabiPoints, opts.rabiPeriods);
     fprintf('%d points/spectrum, %g s of sequence each, %d averages. Rough time: %.0f min.\n', ...
             opts.nPoints, opts.dataSeconds, opts.averages, (30 + tCw + tP + tW + tK)/60);
+    if opts.hfStepMHz > 0
+        fprintf(['Stage 1/2 sweeps: at least one point per %g MHz (up to %d points) so the 2.16 MHz ' ...
+                 'hyperfine can be resolved; every one is tested for it.\n'], ...
+                opts.hfStepMHz, opts.hfMaxPoints);
+    end
+end
+
+function n = sweepPoints(h, opts)
+% Points for a +-h MHz sweep: nPoints, or enough for one per hfStepMHz -- whichever is more,
+% capped at hfMaxPoints. Without it a +-15 MHz CW sweep stepped at 0.75 MHz, a 2.16 MHz
+% triplet got under three points per spacing, and "not resolved" would have been the
+% sampling's verdict rather than the method's.
+    n = opts.nPoints;
+    if isfield(opts, 'hfStepMHz') && opts.hfStepMHz > 0
+        n = max(n, min(opts.hfMaxPoints, ceil(2*h / opts.hfStepMHz) + 1));
+    end
 end
 
 function [S, why] = locateLine(S, sv)
@@ -690,7 +737,7 @@ function out = analyse(out)
     M = struct();
     M.cw = cwModel(sp(isCw));
     M.pulsed = pulsedModel(sp(isP));
-    M.hyperfine = hyperfineTest(sp(isP), S);
+    M.hyperfine = hyperfineSummary(sp, isCw, isP);
     out.model = M;
 
     % ---- walk check -----------------------------------------------------------------------
@@ -715,11 +762,16 @@ function out = analyse(out)
     out.verdict = verdict(out);
 end
 
-function m = spectrumMetrics(sp, S)
+function m = spectrumMetrics(sp, S, doHf)
+% doHf (default true): also test the spectrum for the nitrogen hyperfine. The stage 4/5 knob
+% spectra skip it -- they are judged on contrast at a fixed line shape -- but every spectrum
+% that gets it carries the same fields, so the tables can be concatenated.
+    if ~exist('doHf', 'var'); doHf = true; end
     m = struct('fitOk', false, 'f0', NaN, 'f0Err', NaN, 'fwhm', NaN, 'fwhmErr', NaN, ...
                'C', NaN, 'CErr', NaN, 'B0', NaN, 'chi2', NaN, 'y', [], 'e', [], 'PL', NaN, ...
                'PLerr', NaN, 'refDip', NaN, 'refDipErr', NaN, 'sigDip', NaN, 'sigDipErr', NaN, ...
                'noiseDensity', NaN, 'etaData', NaN, 'etaWall', NaN, 'tData', NaN);
+    m = setFields(m, 1, hfBlankMetrics());
     if ~sp.ok; return; end
     [y, e] = ratioOf(sp);
     m.y = y; m.e = e;
@@ -750,6 +802,77 @@ function m = spectrumMetrics(sp, S)
     m.noiseDensity = median(e) * sqrt(tPoint);
     m.etaData = 0.770 * m.fwhm * m.noiseDensity / m.C;
     m.etaWall = m.etaData * sqrt(sp.tWall / m.tData);
+
+    if doHf
+        m = setFields(m, 1, hyperfineMetrics(sp, y, e, m.B0, m.noiseDensity));
+    end
+end
+
+function h = hfBlankMetrics()
+    h = struct('hfTested', false, 'hfWhy', '', 'hfStep', NaN, 'hfNDips', NaN, ...
+               'hfIsotope', '', 'hfConfidence', '', 'hfResolved', false, 'hfVerdict', '', ...
+               'hfShape', '', 'hfA', NaN, 'hfAErr', NaN, 'hfFwhm', NaN, 'hfFwhmErr', NaN, ...
+               'hfInh', NaN, 'hfC', NaN, 'hfCErr', NaN, 'hfP3', NaN, 'hfDbic31', NaN, ...
+               'hfDbicVs1', NaN, 'hfRes', NaN, 'etaHf', NaN, 'hfCurveF', [], 'hfCurveY', []);
+end
+
+function h = hyperfineMetrics(sp, y, e, B0, noiseDensity)
+% Is the nitrogen hyperfine resolved in this spectrum, and how well? esrFitRobust's multiplet
+% model decides: 0-3 dips, shared width and shape, spacing FITTED in 1-5 MHz and only then
+% compared with 14N (2.16) / 15N (3.03), shapes lorentz and gauss -- plus the square-pulse
+% response for a pulsed spectrum, whose pulse length is known -- chosen by BIC.
+%
+%   hfDbic31   BIC(1 dip) - BIC(3 dips): the continuous "how detectable" number. Positive
+%              favours the triplet; above 10 the evidence is decisive. It keeps meaning
+%              something where the yes/no verdict flips, which is what places the onset.
+%   hfFwhm     the width of ONE hyperfine line (pulse and inhomogeneous together for the
+%              pulse shape; hfInh is the inhomogeneous part alone)
+%   hfC        contrast of one line, relative to the baseline
+%   hfRes      A / hfFwhm: above ~0.6 a Lorentzian triplet shows separate dips
+%   etaHf      0.77 * hfFwhm * noise / hfC: the sensitivity on ONE hyperfine line, when the
+%              triplet is resolved -- the number that says which method you would sense with
+    h = hfBlankMetrics();
+    h.hfStep = median(diff(sp.f));
+    tau = [];
+    if strcmp(sp.method, 'pulsed') && isfield(sp.cfg, 'tau') && isfinite(sp.cfg.tau)
+        tau = sp.cfg.tau;
+    end
+    try
+        o = esrFitRobust(struct('f', sp.f, 'y', y, 'e', e, 'nLines', 1, 'baselineOrder', 1, ...
+            'tau', tau, 'hyperfine', true, 'resonance', false, 'field', false, ...
+            'plotIt', false, 'verbose', false));
+    catch err
+        h.hfWhy = ['hyperfine fit error: ' err.message]; return
+    end
+    if ~o.ok; h.hfWhy = o.why; return; end
+    hf = o.hyperfine;
+    if ~hf.tested || ~hf.ok; h.hfWhy = hf.why; return; end
+    h.hfTested = true;
+    h.hfNDips = hf.nDips; h.hfIsotope = hf.isotope; h.hfConfidence = hf.confidence;
+    h.hfResolved = hf.resolved; h.hfVerdict = hf.verdict; h.hfShape = hf.shape;
+    h.hfP3 = hf.prob(4);
+    c = hf.candidates;
+    nd = [c.nDips]; b = [c.bic];
+    if any(nd == 1) && any(nd == 3)
+        h.hfDbic31 = b(nd == 1) - b(nd == 3);
+    end
+    if any(nd == 1) && any(nd == hf.nDips)
+        h.hfDbicVs1 = b(nd == 1) - b(nd == hf.nDips);   % the chosen count against one line
+    end
+    h.hfFwhm = hf.fwhm; h.hfFwhmErr = hf.fwhmErr;
+    if strcmp(hf.shape, 'pulse'); h.hfInh = hf.widthParam; end
+    if hf.nDips >= 2
+        h.hfA = hf.splitting; h.hfAErr = hf.splittingErr;
+        h.hfRes = hf.splitting / max(hf.fwhm, eps);
+    end
+    if isfinite(B0) && B0 > 0
+        h.hfC = hf.depth / B0; h.hfCErr = hf.depthErr / B0;
+    end
+    if h.hfResolved && h.hfC > 0
+        h.etaHf = 0.770 * h.hfFwhm * noiseDensity / h.hfC;
+    end
+    ff = linspace(min(hf.f), max(hf.f), 600)';
+    h.hfCurveF = ff; h.hfCurveY = hf.modelAt(ff);
 end
 
 function [y, e] = ratioOf(sp)
@@ -774,9 +897,12 @@ function q = quickFit(sp, fGuess)
     [y, e] = ratioOf(sp);
     span = max(sp.f) - min(sp.f);
     try
-        fit = esrMultiLineFit(sp.f, y, e, struct('nLines', 1, 'seedCentres', fGuess, ...
-            'baselineOrder', 1, 'maxFwhmMHz', max(40, 1.5*span), 'minDepthSigma', 2, ...
-            'plot', false, 'name', sp.label));
+        % One line, the plain model: no resonance, field or hyperfine stage, so every
+        % spectrum is measured the same way (hyperfineMetrics asks that question separately).
+        fit = esrFitRobust(struct('f', sp.f, 'y', y, 'e', e, 'nLines', 1, ...
+            'seedCentres', fGuess, 'baselineOrder', 1, 'maxFwhmMHz', max(40, 1.5*span), ...
+            'minDepthSigma', 2, 'resonance', false, 'field', false, 'hyperfine', false, ...
+            'plotIt', false, 'verbose', false, 'name', sp.label));
     catch err
         fprintf('   fit error: %s\n', err.message);
         return
@@ -848,37 +974,170 @@ function M = pulsedModel(sp)
     M.ok = true;
 end
 
-function H = hyperfineTest(sp, S)
-% At the longest tau: does a 3-line fit at the 14N spacing beat one line?
-    H = struct('tested', false, 'resolved', false, 'why', '', 'tau', NaN);
-    ok = [sp.fitOk]; sp = sp(ok);
-    if isempty(sp); H.why = 'no pulsed line'; return; end
-    [~, i] = max([sp.setting]); s = sp(i);
-    H.tau = s.setting;
-    step = median(diff(s.f));
-    if s.fwhm > 2.5*2.16 || step > 0.6
-        H.why = sprintf(['not testable: the narrowest pulsed line is %.2f MHz wide (step %.2f MHz), ' ...
-                         'so the 2.16 MHz triplet is unresolved by width alone'], s.fwhm, step);
-        return
+function H = hyperfineSummary(sp, isCw, isP)
+% Where each method resolves the triplet, its best resolved spectrum, and the splitting.
+% Replaces a single 3-line fit at the longest pulse, seeded AT 2.16 MHz and judged by a
+% chi2 ratio: that asked one spectrum one question, and it could not say where the triplet
+% appears or whether CW resolves it at all.
+    H = struct('cw', [], 'pulsed', [], 'A', NaN, 'AErr', NaN, 'isotope', '', ...
+               'inconsistent', [], 'nCoarse', 0);
+    tested = (isCw | isP) & [sp.hfTested];
+    res0 = tested & [sp.hfResolved];
+
+    % ONE isotope per sample. Each spectrum's call is made on its own, and a coarse or noisy
+    % one can land on the other nitrogen: on a saved run a 1.35 MHz-stepped pulsed spectrum
+    % came out "15N, A = 3.58" beside four clean 2.15-2.19 MHz triplets. So the sample's
+    % isotope is the one with the STRONGEST evidence against a single line, and a spectrum
+    % that disagrees is reported as inconsistent rather than counted as resolved.
+    okRes = res0;
+    if any(res0)
+        iso = {sp.hfIsotope};
+        u = unique(iso(res0));
+        score = -Inf(size(u));
+        for i = 1:numel(u)
+            score(i) = max([sp(res0 & strcmp(iso, u{i})).hfDbicVs1]);
+        end
+        [~, k] = max(score);
+        H.isotope = u{k};
+        okRes = res0 & strcmp(iso, H.isotope);
+        H.inconsistent = find(res0 & ~okRes);
+        r = find(okRes);
+        a = [sp(r).hfA]; ae = [sp(r).hfAErr];
+        ok = isfinite(a) & isfinite(ae) & ae > 0;
+        if any(ok)
+            w = 1 ./ ae(ok).^2;
+            H.A = sum(w .* a(ok)) / sum(w); H.AErr = 1 / sqrt(sum(w));
+        end
     end
-    H.tested = true;
-    try
-        f3 = esrMultiLineFit(s.f, s.y, s.e, struct('nLines', 3, ...
-             'seedCentres', s.f0 + [-2.16 0 2.16], 'minSepMHz', 1, 'baselineOrder', 1, ...
-             'minDepthSigma', 2, 'plot', false, 'name', 'hyperfine'));
-    catch
-        f3 = struct('ok', false);
+    % DETECTED but not cleanly resolved: a multiplet beats one line decisively (dBIC > 10),
+    % but the count or the spacing is not settled. That is the onset region, and the answer
+    % to "when does it become detectable" lives there as much as in the clean calls.
+    detected = tested & ~okRes & [sp.hfDbic31] > 10;
+    H.cw = hfMethodSummary(sp, find(isCw), 'cw', okRes, detected);
+    H.pulsed = hfMethodSummary(sp, find(isP), 'pulsed', okRes, detected);
+    H.nCoarse = nnz(tested & [sp.hfStep] > 0.7);
+end
+
+function Q = hfMethodSummary(sp, idx, kind, okRes, detected)
+    Q = struct('kind', kind, 'nTested', 0, 'resolved', [], 'detected', [], ...
+               'notResolved', [], 'best', [], 'narrowest', [], 'onset', NaN, 'onsetAmp', NaN);
+    if isempty(idx); return; end
+    t = idx([sp(idx).hfTested]);
+    Q.nTested = numel(t);
+    if isempty(t); return; end
+    [~, k] = min([sp(t).hfFwhm]);
+    Q.narrowest = t(k);
+    r = t(okRes(t));
+    Q.resolved = r;
+    Q.detected = t(detected(t));
+    Q.notResolved = setdiff(t, [r, Q.detected]);
+    if isempty(r); return; end
+    eta = [sp(r).etaHf]; eta(~isfinite(eta)) = Inf;
+    [~, k] = min(eta);
+    Q.best = r(k);
+    % The onset: for CW the STRONGEST power that still resolves it (more power, wider lines);
+    % for pulsed the SHORTEST pulse that does (shorter pulse, wider line), and its amplitude.
+    if strcmp(kind, 'cw')
+        Q.onset = max([sp(r).setting]);
+    else
+        [Q.onset, k] = min([sp(r).setting]);
+        Q.onsetAmp = sp(r(k)).cfg.amplitude;
     end
-    if ~f3.ok || numel(f3.lines) ~= 3
-        H.why = '3-line fit did not hold three lines'; return
+end
+
+function s = settingText(sp)
+    if strcmp(sp.method, 'cw')
+        s = sprintf('%g dBm', sp.setting);
+    else
+        s = sprintf('%.0f ns (%.1f dBm)', 1e3*sp.setting, sp.cfg.amplitude);
     end
-    sp3 = diff(sort([f3.lines.centre]));
-    deep = all([f3.lines.depth] > 3*[f3.lines.depthErr]);
-    better = f3.chi2Reduced < 0.8 * s.chi2;
-    H.spacings = sp3; H.chi1 = s.chi2; H.chi3 = f3.chi2Reduced;
-    H.resolved = deep && better && all(abs(sp3 - 2.16) < 0.35);
-    H.why = sprintf('spacings %s MHz, chi2 %.2f (1 line) -> %.2f (3 lines)', ...
-                    mat2str(roundTo(sp3, 2)), s.chi2, f3.chi2Reduced);
+end
+
+function s = settingList(sp, idx)
+    if isempty(idx); s = 'none'; return; end
+    parts = cell(1, numel(idx));
+    for i = 1:numel(idx); parts{i} = settingText(sp(idx(i))); end
+    s = strjoin(parts, ', ');
+end
+
+function v = hyperfineVerdict(sp, H, Mp)
+    v = {'3. THE 14N HYPERFINE: WHICH METHOD RESOLVES IT? (every stage 1/2 spectrum tested)'};
+    names = struct('cw', 'CW', 'pulsed', 'pulsed');
+    for kind = {'cw', 'pulsed'}
+        Q = H.(kind{1}); nm = names.(kind{1});
+        if Q.nTested == 0
+            v{end+1} = sprintf('   %s: no spectrum could be tested.', nm); %#ok<AGROW>
+            continue
+        end
+        seen = '';
+        if ~isempty(Q.detected)
+            seen = sprintf('; a multiplet is seen (dBIC 3-vs-1 > 10) but not cleanly resolved at %s', ...
+                           settingList(sp, Q.detected));
+        end
+        if isempty(Q.resolved)
+            s = sp(Q.narrowest);
+            v{end+1} = sprintf(['   %s: NOT resolved in any of %d spectra%s. Narrowest: %.2f MHz per ' ...
+                'line at %s, dBIC 3-vs-1 %+.1f.'], nm, Q.nTested, seen, s.hfFwhm, ...
+                settingText(s), s.hfDbic31); %#ok<AGROW>
+            continue
+        end
+        v{end+1} = sprintf('   %s: resolved at %s%s; not at %s.', nm, settingList(sp, Q.resolved), ...
+                           seen, settingList(sp, Q.notResolved)); %#ok<AGROW>
+        if strcmp(kind{1}, 'cw')
+            v{end+1} = sprintf('      -> CW resolves it up to %g dBm.', Q.onset); %#ok<AGROW>
+        else
+            v{end+1} = sprintf(['      -> pulsed resolves it from %.0f ns pulses (%.1f dBm) and ' ...
+                                'longer.'], 1e3*Q.onset, Q.onsetAmp); %#ok<AGROW>
+        end
+        b = sp(Q.best);
+        inh = '';
+        if isfinite(b.hfInh); inh = sprintf(' (inhomogeneous %.2f)', b.hfInh); end
+        v{end+1} = sprintf(['      best: %s -- %.2f +- %.2f MHz per line%s, %.2f%% contrast per ' ...
+            'line, A = %.3f +- %.3f MHz, dBIC %+.0f, eta_hf %.3g MHz/rtHz.'], settingText(b), ...
+            b.hfFwhm, b.hfFwhmErr, inh, 100*b.hfC, b.hfA, b.hfAErr, b.hfDbic31, b.etaHf); %#ok<AGROW>
+    end
+    bc = H.cw.best; bp = H.pulsed.best;
+    if ~isempty(bc) && ~isempty(bp)
+        c = sp(bc); p = sp(bp);
+        r = p.etaHf / c.etaHf;
+        v{end+1} = sprintf(['   => on one hyperfine line pulsed is %s by %.1fx (eta_hf %.3g vs %.3g ' ...
+            'MHz/rtHz), with %.1fx the CW contrast per line at %.2fx its width.'], ...
+            okWord(r < 1, 'BETTER', 'worse'), max(r, 1/r), p.etaHf, c.etaHf, ...
+            p.hfC / c.hfC, p.hfFwhm / c.hfFwhm);
+    elseif ~isempty(bp)
+        v{end+1} = ['   => only PULSED resolves the triplet here: the clearest single sign that it ' ...
+                    'beats CW on this sample.'];
+    elseif ~isempty(bc)
+        v{end+1} = ['   => only CW resolves it here: the pulsed lines stay too wide or too shallow ' ...
+                    'at these pulse lengths -- longer pulses (weaker amplitude) are the next thing ' ...
+                    'to try.'];
+    elseif H.cw.nTested + H.pulsed.nTested > 0
+        v{end+1} = '   => neither resolves it at these settings.';
+    end
+    if isfinite(H.A)
+        v{end+1} = sprintf(['   splitting over the resolved spectra: A = %.3f +- %.3f MHz (%s; 14N ' ...
+                            '2.16, 15N 3.03).'], H.A, H.AErr, H.isotope);
+    end
+    for k = H.inconsistent(:)'
+        s = sp(k);
+        v{end+1} = sprintf(['   %s %s came out %s (A = %.2f MHz, step %.2f MHz) on a %s sample: not ' ...
+                            'counted -- too coarse or too noisy to call.'], upper(s.method), ...
+                           settingText(s), s.hfIsotope, s.hfA, s.hfStep, H.isotope); %#ok<AGROW>
+    end
+    % The pulsed model fits ONE-Lorentzian widths, so once the triplet is there its
+    % "inhomogeneous" floor is the multiplet's envelope (~2A + w), not a line width.
+    if ~isempty(Mp) && isfield(Mp, 'ok') && Mp.ok && ~isempty(H.pulsed.resolved)
+        b = sp(H.pulsed.best);
+        inh = '';
+        if isfinite(b.hfInh); inh = sprintf(', inhomogeneous %.2f MHz from the pulse-shape fit', b.hfInh); end
+        v{end+1} = sprintf(['   NOTE the pulsed model''s %.2f MHz "inhomogeneous" width (and T2* from it) ' ...
+            'is fitted to one-Lorentzian widths and includes the hyperfine envelope; one line is ' ...
+            '%.2f MHz at %s%s.'], Mp.fwhmInh, b.hfFwhm, settingText(b), inh);
+    end
+    if H.nCoarse > 0
+        v{end+1} = sprintf(['   NOTE %d spectra are stepped coarser than 0.7 MHz: "not resolved" there ' ...
+                            'is partly the sampling (hfStepMHz).'], H.nCoarse);
+    end
 end
 
 function W = walkCompare(w, cl)
@@ -916,7 +1175,7 @@ function m = knobMetrics(sp, S, ref)
         [m.C, m.CErr] = fixedShape(sp, ref.f0, ref.fwhm);
         m.fom = m.C / m.CErr / sqrt(tData);
     end
-    f = spectrumMetrics(sp, S);
+    f = spectrumMetrics(sp, S, false);
     if f.fitOk
         m.freeOk = true; m.freeC = f.C; m.freeCErr = f.CErr; m.freeFwhm = f.fwhm;
         m.freeF0 = f.f0; m.etaData = f.etaData;
@@ -1144,17 +1403,14 @@ function v = verdict(out)
                                100*median([sp(selP).refDip] ./ [sp(selP).sigDip]), ...
                                100*median([sp(selC).refDip] ./ [sp(selC).sigDip]));
         end
-        if M.hyperfine.tested
-            v{end+1} = sprintf('   14N hyperfine at tau %.3g us: %s (%s).', M.hyperfine.tau, ...
-                okWord(M.hyperfine.resolved, 'RESOLVED', 'not resolved'), M.hyperfine.why);
-        else
-            v{end+1} = sprintf('   14N hyperfine: %s.', M.hyperfine.why);
-        end
     end
 
-    % ---------------- 3. knobs and pi check ----------------
+    % ---------------- 3. the hyperfine ----------------
+    v = [v, hyperfineVerdict(sp, M.hyperfine, M.pulsed)];
+
+    % ---------------- 4. knobs and pi check ----------------
     if ~isempty(out.knobs)
-        v{end+1} = '3. PULSED SETTINGS (stage 4/5, at the best tau)';
+        v{end+1} = '4. PULSED SETTINGS (stage 4/5, at the best tau)';
         K = out.knobs;
         for kind = {'window', 'dark', 'init'}
             sel = find(strcmp({K.kind}, kind{1}));
@@ -1194,10 +1450,10 @@ function v = verdict(out)
         end
     end
 
-    % ---------------- 4. recommendation ----------------
+    % ---------------- 5. recommendation ----------------
     if ~isempty(B.pulsed)
         b = sp(B.pulsed.idxData);
-        v{end+1} = '4. TO USE PULSED ESR AT ITS BEST HERE';
+        v{end+1} = '5. TO USE PULSED ESR AT ITS BEST HERE';
         v{end+1} = sprintf(['   p.amplitude = %.1f;  p.mwPulseDuration = %.4f;   %% pi MEASURED by Rabi at this ' ...
                             'amplitude; FWHM %.2f MHz'], b.cfg.amplitude, b.setting, b.fwhm);
         v{end+1} = sprintf(['   p.frequency = %.2f + (%.2f:%.2f:%.2f);   %% ~3 FWHM each side, 5 points per FWHM'], ...
@@ -1288,6 +1544,7 @@ function report(out)
                 s.label, s.f0, s.f0Err, s.fwhm, s.fwhmErr, 100*s.C, 100*s.CErr, s.PL, ...
                 100*s.refDip/max(s.sigDip, eps), s.etaData, s.etaWall, s.tWall, s.tWall/s.tData);
     end
+    reportHyperfine(sp, out.model);
     if isfield(out, 'rabi') && ~isempty(out.rabi)
         fprintf('\nStage 2 Rabis (two channels as calibrated, on the line). pi is MEASURED; the\n');
         fprintf('scaled column is what 20*log10 scaling from the json pair would have used instead.\n');
@@ -1327,6 +1584,129 @@ function report(out)
     fprintf('\nWHAT IT SAYS\n');
     for i = 1:numel(out.verdict); fprintf('%s\n', out.verdict{i}); end
     fprintf('\n');
+end
+
+function reportHyperfine(sp, M)
+    if ~isfield(sp, 'hfTested') || ~any([sp.hfTested]); return; end
+    iso = '';
+    if isstruct(M) && isfield(M, 'hyperfine'); iso = M.hyperfine.isotope; end
+    fprintf(['\nHyperfine per spectrum (esrFitRobust multiplet model, BIC over 0-3 dips). dBIC 3v1 > 0 ' ...
+             'favours the triplet, > 10 is decisive;\nFWHM and contrast are per HYPERFINE line; ' ...
+             'eta_hf is the sensitivity on one of them.\n']);
+    fprintf('%-26s %6s %-11s %-10s %9s %16s %15s %14s %6s %10s\n', 'spectrum', 'step', 'verdict', ...
+            'confidence', 'dBIC 3v1', 'A (MHz)', 'line FWHM', 'per line (%)', 'A/FW', 'eta_hf');
+    for i = 1:numel(sp)
+        s = sp(i);
+        if ~s.ok || ~s.fitOk; continue; end
+        if ~s.hfTested
+            fprintf('%-26s  not tested: %s\n', s.label, s.hfWhy); continue
+        end
+        if s.hfResolved && (isempty(iso) || strcmp(s.hfIsotope, iso))
+            vd = s.hfIsotope;
+        elseif s.hfResolved
+            vd = [s.hfIsotope '?!'];          % disagrees with the sample: see the verdict
+        elseif s.hfDbic31 > 10
+            vd = 'seen';
+        elseif s.hfNDips >= 2
+            vd = sprintf('%d dips ?', s.hfNDips);
+        else
+            vd = 'no';
+        end
+        aTxt = '-';
+        if isfinite(s.hfA); aTxt = sprintf('%.3f+-%.3f', s.hfA, s.hfAErr); end
+        fprintf('%-26s %6.2f %-11s %-10s %+9.1f %16s %7.2f+-%-5.2f %6.3f+-%-5.3f %6.2f %10.3g\n', ...
+                s.label, s.hfStep, vd, s.hfConfidence, s.hfDbic31, aTxt, s.hfFwhm, s.hfFwhmErr, ...
+                100*s.hfC, 100*s.hfCErr, s.hfRes, s.etaHf);
+    end
+end
+
+function plotHyperfine(out, cCw, cP)
+% Three panels: is the triplet there (dBIC 3 vs 1 against the line width), what each method
+% gets per hyperfine line (contrast against width, the hyperfine analogue of the main
+% figure's contrast-vs-linewidth), and the best spectrum of each with its multiplet fit.
+    sp = out.spectra;
+    if ~isfield(sp, 'hfTested'); return; end
+    sel = {find(strcmp({sp.method}, 'cw') & [sp.fitOk] & [sp.hfTested]), ...
+           find(strcmp({sp.method}, 'pulsed') & [sp.fitOk] & [sp.hfTested])};
+    if isempty(sel{1}) && isempty(sel{2}); return; end
+    cols = {cCw, cP}; mk = {'o', 's'}; nm = {'CW', 'pulsed'};
+    resAll = find([sp.hfResolved]);         % the summary's list when there is one (isotope-consistent)
+    if isfield(out, 'model') && isstruct(out.model) && isfield(out.model, 'hyperfine')
+        resAll = [out.model.hyperfine.cw.resolved, out.model.hyperfine.pulsed.resolved];
+    end
+    figure('Color', 'w', 'Position', [80 80 1300 400], 'Name', 'esrPulsedVsCwCompare hyperfine');
+
+    ax = subplot(1, 3, 1); hold(ax, 'on'); styleAx(ax);
+    hs = []; ls = {};
+    for m = 1:2
+        j = sel{m}; if isempty(j); continue; end
+        [~, o] = sort([sp(j).setting]); j = j(o);     % joined in power / pulse-length order
+        hs(end+1) = plot(ax, [sp(j).fwhm], [sp(j).hfDbic31], [mk{m} '-'], 'Color', cols{m}); %#ok<AGROW>
+        ls{end+1} = nm{m}; %#ok<AGROW>
+        r = j(ismember(j, resAll));
+        plot(ax, [sp(r).fwhm], [sp(r).hfDbic31], mk{m}, 'Color', cols{m}, 'MarkerFaceColor', cols{m});
+        for k = j
+            text(ax, sp(k).fwhm, sp(k).hfDbic31, ['  ' shortSetting(sp(k))], 'FontSize', 7, ...
+                 'Color', cols{m});
+        end
+    end
+    xl = xlim(ax);
+    plot(ax, xl, [0 0], ':', 'Color', [0.4 0.4 0.4]);
+    plot(ax, xl, [10 10], '--', 'Color', [0.4 0.4 0.4]);
+    xlabel(ax, 'line FWHM, one-Lorentzian fit (MHz)'); ylabel(ax, '\DeltaBIC, 3 dips vs 1');
+    title(ax, 'is the triplet there? (filled: resolved; dashed: decisive)', 'FontWeight', 'bold');
+    if ~isempty(hs); legend(ax, hs, ls, 'Location', 'northeast', 'Box', 'off'); end
+
+    ax = subplot(1, 3, 2); hold(ax, 'on'); styleAx(ax); set(ax, 'XScale', 'log');
+    for m = 1:2
+        j = sel{m}; if isempty(j); continue; end
+        ok = isfinite([sp(j).hfC]) & isfinite([sp(j).hfFwhm]); j = j(ok);
+        if isempty(j); continue; end
+        [~, o] = sort([sp(j).hfFwhm]); j = j(o);
+        h = errorbar(ax, [sp(j).hfFwhm], 100*[sp(j).hfC], 100*[sp(j).hfCErr], [mk{m} '-']);
+        set(h, 'Color', cols{m});                    % open markers; resolved ones filled below
+        r = j(ismember(j, resAll));
+        plot(ax, [sp(r).hfFwhm], 100*[sp(r).hfC], mk{m}, 'Color', cols{m}, 'MarkerFaceColor', cols{m});
+    end
+    yl = ylim(ax);
+    plot(ax, [2.16 2.16]/0.577, yl, ':', 'Color', [0.4 0.4 0.4]);   % Lorentzian resolution limit
+    ylim(ax, yl);
+    xlabel(ax, 'one hyperfine line FWHM (MHz)'); ylabel(ax, 'contrast per line (%)');
+    title(ax, 'per hyperfine line (higher-left wins; dotted: A/0.58)', 'FontWeight', 'bold');
+
+    ax = subplot(1, 3, 3); hold(ax, 'on'); styleAx(ax);
+    H = []; if isfield(out, 'model') && isfield(out.model, 'hyperfine'); H = out.model.hyperfine; end
+    hs = []; ls = {}; off = 0; keys = {'cw', 'pulsed'};
+    for m = 1:2
+        k = [];
+        if ~isempty(H)
+            Q = H.(keys{m});
+            k = Q.best; if isempty(k); k = Q.narrowest; end
+        end
+        if isempty(k); continue; end
+        s = sp(k);
+        C = max(s.C, eps);
+        yN = off + 1 - (1 - s.y/s.B0) / C;          % each normalised to its own depth
+        plot(ax, s.f - s.f0, yN, '.', 'Color', cols{m}, 'MarkerSize', 9);
+        if ~isempty(s.hfCurveF)
+            hs(end+1) = plot(ax, s.hfCurveF - s.f0, off + 1 - (1 - s.hfCurveY/s.B0) / C, '-', ...
+                             'Color', cols{m}, 'LineWidth', 1.6); %#ok<AGROW>
+            ls{end+1} = sprintf('%s %s: %s', nm{m}, settingText(s), ...
+                                okWord(s.hfResolved, s.hfIsotope, 'not resolved')); %#ok<AGROW>
+        end
+        off = off - 1.4;
+    end
+    yl = ylim(ax);
+    for a = [-2.16 0 2.16]; plot(ax, [a a], yl, ':', 'Color', [0.6 0.6 0.6]); end
+    ylim(ax, yl);
+    xlabel(ax, 'f - f_0 (MHz)'); ylabel(ax, 'normalised dip (offset per method)');
+    title(ax, 'best of each method, with the multiplet fit', 'FontWeight', 'bold');
+    if ~isempty(hs); legend(ax, hs, ls, 'Location', 'southoutside', 'Box', 'off', 'FontSize', 7); end
+end
+
+function s = shortSetting(sp)
+    if strcmp(sp.method, 'cw'); s = sprintf('%g dBm', sp.setting);
+    else; s = sprintf('%.0f ns', 1e3*sp.setting); end
 end
 
 function plotAll(out)
@@ -1397,6 +1777,12 @@ function plotAll(out)
     set(ax, 'YTick', 1:numel(lab), 'YTickLabel', lab, 'FontSize', 7);
     xlabel(ax, 'reference-trace dip (% of signal dip)');
     title(ax, 'reference dip (0 = clean reference)', 'FontWeight', 'bold');
+
+    try
+        plotHyperfine(out, cCw, cP);
+    catch err
+        fprintf('hyperfine plot failed: %s\n', err.message);
+    end
 
     if isfield(out, 'rabi') && ~isempty(out.rabi) && any([out.rabi.ok])
         r = out.rabi([out.rabi.ok]);
