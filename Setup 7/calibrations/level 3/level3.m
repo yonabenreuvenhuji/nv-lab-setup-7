@@ -121,6 +121,8 @@ fprintf('\n|B|: survey %.3f G, coil model %.3f G\n', sv.B, h.Brho);
 %
 % Five tests: recover a known resonator, refuse when the peak is not in the data, and quote
 % error bars that cover the truth as often as they claim to. Expect ALL TESTS PASS.
+% Both are safe in the running setup: testB1Predict drives its OWN Helmholtz object on dummy
+% supplies ('Helmholtz_offlineRig'); the live one, its currents and the GUI are not touched.
 tb = testB1RabiChain;
 tp = testB1Predict;          % predict mode on a simulated rig: 3 ESRs, the true line lands on f0
 

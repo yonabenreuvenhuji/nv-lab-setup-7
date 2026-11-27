@@ -154,7 +154,10 @@ function out = calibB1Rabi(opts)
 %   surveyFn, rabiFn   OFFLINE GRADERS ONLY: @(freqs, opts) -> a calibFieldSurvey-like
 %                  struct, and @(freq, opts) -> a runRabiAt-like struct, in place of the
 %                  hardware (testB1Predict). [] = the real thing.
-%   saveRaw        save the whole output, points included, to
+%   helmholtz      OFFLINE GRADERS ONLY: the Helmholtz object to drive, in place of
+%                  getObjByName('Helmholtz') -- testB1Predict hands it a second object on
+%                  dummy supplies, so it can run next to the live setup. [] = the live one.
+%   saveRaw       save the whole output, points included, to
 %                  results\<date>\level 3\calibB1Rabi_<stamp>.mat (default true; also on
 %                  an error, with whatever was measured)
 %
@@ -305,6 +308,7 @@ function out = calibB1Rabi(opts)
     opts = withDefaults(opts, struct( ...
         'saveRaw', true, 'esrMode', 'auto', 'anchorRho', [], 'anchorStep', 1.5, ...
         'anchorMargin', 35, 'predictErrMHz', 0.3, 'surveyFn', [], 'rabiFn', [], ...
+        'helmholtz', [], ...
         'rhoCoarse', [], 'rhoFine', [], 'rhoFineSpan', 4, 'nFine', 9, 'twoPass', true, ...
         'rabiAmplitude', -16, 'repeats', 300, 'averages', 2, 'tau', [], ...
         'useSequenceWalk', true, 'passesPerRun', [], 'walkWarmupTriggers', 1, ...
@@ -352,9 +356,11 @@ function out = calibB1Rabi(opts)
 
     GAMMA = 2.8025;
     if isempty(opts.tau); opts.tau = round(0.02 : 0.01 : 1.0, 3); end
+    h = opts.helmholtz;
+    opts.helmholtz = [];        % a handle has no business in the saved output
     out = struct('ok', false, 'opts', opts, 'gamma', GAMMA);
 
-    h = getObjByName('Helmholtz');
+    if isempty(h); h = getObjByName('Helmholtz'); end
     if isempty(h)
         try; h = Helmholtz; catch; end
     end
