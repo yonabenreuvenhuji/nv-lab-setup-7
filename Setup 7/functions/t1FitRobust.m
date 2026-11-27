@@ -443,8 +443,20 @@ function out = t1FitRobust(args)
 
     out = o; out.opts = opts;
     if ~isempty(pullInfo); out.pull = pullInfo; end
+
+    % For the experiment window (ExpFit): the curves the figure draws (one row per
+    % projection) and the figure's title, so the window shows the same fit as this figure.
+    oc = out; oc.opts.exp = [];
+    out.curveAt = @(tt) t1CurveAt(oc, tt);
+    try; out.titleLines = titleLines(out); catch; out.titleLines = {}; end
+
     if opts.verbose; report(out); end
     if opts.plotIt;  drawIt(out); end
+end
+
+function M = t1CurveAt(o, tt)
+% The fitted model at any tau, one row per projection -- what drawIt draws.
+    M = modelOf(paramVec(o), reshape(tt, 1, []), [o.plateau(:), o.amp(:)], o.kind);
 end
 
 % ======================================================================
@@ -1090,7 +1102,7 @@ function drawIt(o)
         td = linspace(min(o.t), max(o.t), 1500);
     end
     lin = [o.plateau(:), o.amp(:)];
-    Md = modelOf(paramVec(o), td, lin, o.kind);
+    Md = t1CurveAt(o, td);
 
     % COLOUR BY ROLE, NOT BY ROW. The |1> trace is the measurement and the |0> trace is a
     % control, and the control is exactly the thing that should recede -- so the signal takes the

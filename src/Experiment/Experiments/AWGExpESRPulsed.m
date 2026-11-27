@@ -185,6 +185,11 @@ classdef AWGExpESRPulsed < ExperimentAWG
 
     %% Construction and setters
     methods
+        function spec = fitSpec(obj)
+            % The experiment window's fit: esrFitRobust (see ExpFit)
+            spec = ExpFit.esr(obj);
+        end
+
         function obj = AWGExpESRPulsed()
             obj@ExperimentAWG(AWGExpESRPulsed.NAME);
             obj.parameterName = 'frequencies';
@@ -200,6 +205,7 @@ classdef AWGExpESRPulsed < ExperimentAWG
             obj.laserInitializationDuration = 30;    % us
 
             obj.isPlotAlternateAvailable = true;
+            obj.isPlotRawAvailable = false;           % the alternate view already is the raw one
             obj.displayType2 = 'Raw signal (kcps)';   % the window shows 'Raw signal (V)' with the photodiode (Spcm.localiseUnits)
             obj.mCurrentXAxisParam = ExpParamDoubleVector('Frequency', [], [], 'MHz', obj.NAME);
             % Labels as in the robust fit's figure (ExpPlotStyle / fitStyle)

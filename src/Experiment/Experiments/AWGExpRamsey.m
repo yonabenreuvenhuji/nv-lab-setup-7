@@ -94,6 +94,16 @@ classdef AWGExpRamsey < ExperimentAWG
     
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     methods
+        function spec = fitSpec(obj)
+            % The experiment window's fit: ramseyFitRobust (see ExpFit)
+            spec = ExpFit.ramsey(obj);
+        end
+
+        function names = rawWindowNames(~, ~)
+            % Rows of obj.signal, for the window's raw view (see publishRamsey)
+            names = {'|1> signal', '|1> reference', '|0> signal', '|0> reference'};
+        end
+
         function obj = AWGExpRamsey()
             obj@ExperimentAWG(AWGExpRamsey.NAME);
             obj.parameterName = 'taus';

@@ -92,6 +92,24 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         sterr               % double. Measured sterr of the signal.
         currIter = 0;       % int. number of current iteration (average)
         currParamIter = 0;  % Counts the current parameters' iteration
+
+        % The fits drawn on the experiment window, one per view (see fit and ExpFit). Saved
+        % with the data; a new run clears them.
+        fits = struct('normal', [], 'alternate', [], 'raw', [])
+    end
+
+    properties
+        fitOptions = struct()   % struct. Options for this experiment's robust fit (see fit). Kept between fits.
+        autoFit = 'off'         % 'off' | 'end' (fit when a run ends, before the autosave) | 'average' (after every average)
+    end
+
+    properties (Hidden, SetAccess = protected)
+        % Save state of this run (see saveStatus). Not saved: they describe the files.
+        savedFile = ''          % string. The file this run was last saved to; '' = not saved
+        dataVersion = 0         % int. Counts changes to what a save would write: averages, fits
+        savedVersion = -1       % int. dataVersion when savedFile was written
+        fitRequested = false    % logical. A fit was asked for during a run: done after the average
+        fitError = ''           % string. Why the last fit failed ('' = it did not)
     end
     
     properties (Hidden, SetAccess = protected)
@@ -128,6 +146,12 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         plotXLabel = '';            % bottom axis, normal and alternate views
         plotYLabel = '';            % left axis (colorbar in 2D), normal view
         plotYLabelAlternate = '';   % left axis, alternate view
+
+        % The raw view: every detection window on its own, before any ratio (rawSignal).
+        % Off where the alternate view already is the raw one (ESR).
+        isPlotRaw = false;
+        isPlotRawAvailable = true;
+        displayTypeRaw = 'Raw windows';
     end
     
     properties (Constant)
@@ -140,7 +164,9 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         EVENT_EXP_PAUSED = 'experimentPaused'               % when the experiment stops from running
         EVENT_PLOT_ANALYZE_FIT = 'plot_analyzie_fit'        % when the experiment wants the plot to draw the fitting-function-analysis
         EVENT_PARAM_CHANGED = 'experimentParameterChanged'  % when one of the sequence params \ general params is changed
-        
+        EVENT_FIT_UPDATED = 'fitUpdated'                    % a fit was added to or cleared from the window
+        EVENT_SAVE_STATE = 'saveStateChanged'               % this run was saved, or changed since
+
         % Exception handling
         EXCEPTION_ID_NO_EXPERIMENT = 'getExp:noExp';
         EXCEPTION_ID_NOT_CURRENT = 'getExp:notCurrExp';
@@ -444,6 +470,25 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             obj.shouldAutosave = newVal;
         end
         
+        function set.autoFit(obj, newVal)
+            if islogical(newVal) || isnumeric(newVal)   % true = fit when the run ends
+                newVal = BooleanHelper.ifTrueElse(isscalar(newVal) && logical(newVal), 'end', 'off');
+            end
+            newVal = lower(char(newVal));
+            if ~ismember(newVal, {'off', 'end', 'average'})
+                obj.sendError('autoFit must be ''off'', ''end'' (when a run ends) or ''average'' (after every average)');
+            end
+            obj.autoFit = newVal;
+        end
+
+        function set.fitOptions(obj, newVal)
+            if isempty(newVal); newVal = struct(); end
+            if ~isstruct(newVal) || ~isscalar(newVal)
+                obj.sendError('fitOptions must be a struct of options for the robust fit, e.g. struct(''nLines'', 1)');
+            end
+            obj.fitOptions = newVal;
+        end
+
         function set.isTracking(obj, newVal)
             checkBoolean(obj, newVal)
             % If we got here, then newVal is OK.
@@ -506,19 +551,22 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             
             % Before we start, we want to initialize all devices
             obj.prepare;
-            
+
+            paramsSnapshotTaken = false;
             if obj.changeFlag && obj.currIter == 0
                 % Since there is no data, we can just restart without
                 % asking.
                 obj.sendEventParamChanged;
+                paramsSnapshotTaken = true;
                 obj.changeFlag = false;
                 obj.restartFlag = true;
             elseif obj.changeFlag
                 % We might not be able to continue with the old Experiment,
                 % since something critical has changed
                 obj.sendEventParamChanged;
+                paramsSnapshotTaken = true;
                 obj.changeFlag = false;
-                
+
                 % Dialog box
                 strQuestion = sprintf('Critical parameters have been changed!\n Do you want to restart the Experiment?');
                 strTitle = 'Parameters changed';
@@ -527,6 +575,12 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 end
             end
             if obj.restartFlag
+                % A new run gets its own parameter snapshot, and with it its own file name.
+                % Without this, Restart with unchanged parameters autosaved over the previous
+                % run's file, under the previous run's start time.
+                if ~paramsSnapshotTaken
+                    obj.sendEventParamChanged;
+                end
                 % Resetting data
                 obj.reset;
                 obj.restartFlag = false;    % If we pause now, it will already be the middle of an experiment, and we want to be able to resume it.
@@ -582,7 +636,9 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                         obj.clearUncompleteRun;
                         break;
                     end
+                    obj.dataVersion = obj.dataVersion + 1;  % one more average than the last save
                     plotResults(obj);
+                    obj.fitDuringRun(false);    % Auto-fit, or a fit asked for during the average
                     obj.averagesTimeStamp(i,:) = clock;
                     sendEventDataUpdated(obj)   % Saves, and maybe other things
                     percentage = i/obj.averages*100;
@@ -608,6 +664,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             obj.isRunning = false;
             obj.stopFlag = true;
             obj.wrapUp;
+            obj.fitDuringRun(true);     % Auto-fit 'end': before the autosave, so the file has it
             sendEventExpPaused(obj);
             
             % Torn off helmholtz if exist
@@ -775,7 +832,347 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             end
         end
     end
-    
+
+    %% Fitting and saving: what the experiment window's Fit and Save buttons call
+    methods
+        function spec = fitSpec(obj) %#ok<MANU>
+            % FITSPEC Which robust fitter this experiment uses, and the window's options for
+            % it (see ExpFit). [] = no fit. A class with a fit overrides this in one line:
+            %     function spec = fitSpec(obj); spec = ExpFit.esr(obj); end
+            spec = [];
+        end
+
+        function varargout = fit(obj, opts, view)
+            %FIT Fit what the window shows with this experiment's robust fitter, and draw it there.
+            %
+            %   o = a.fit;                         % the same as the window's Fit button
+            %   o = a.fit(struct('nLines', 1));    % options for the fitter. They stay (a.fitOptions);
+            %                                      % an empty value puts one back to the default
+            %   o = a.fit([], 'raw');              % a view: 'normal' | 'alternate' | 'raw'
+            %   a.fit(struct('plotIt', true));     % and the fitter's own figure (Open In Figure)
+            %
+            % In the normal view this IS o = esrFitRobust(struct('exp', a, ...)) -- or rabi,
+            % ramsey, echo, t1: the same call and the same out. In the alternate and raw views
+            % every trace is fitted on its own and o is a cell, one out per trace. plotIt and
+            % verbose (default true) apply to this call only.
+            %
+            % The fit is kept in a.fits, drawn on the window and saved with the data (save
+            % again if the run was already saved: the window's Save button, or a.saveToFile).
+            % a.clearFit removes it; a new run clears it.
+            spec = obj.fitSpec();
+            if isempty(spec)
+                obj.sendError(sprintf('%s has no fit. Its class can add one by overriding fitSpec.', obj.name));
+            end
+            if ~exist('opts', 'var') || isempty(opts); opts = struct(); end
+            if ~exist('view', 'var') || isempty(view); view = obj.currentView(); end
+            view = obj.checkView(view);
+            if obj.currIter == 0
+                obj.sendError(sprintf('%s has no data to fit yet.', obj.name));
+            end
+
+            % plotIt and verbose are for this call. The rest are the fitter's options, and stay
+            % for the next fit and the window's controls.
+            plotIt = false; verbose = true;
+            if isfield(opts, 'plotIt'); plotIt = logical(opts.plotIt); opts = rmfield(opts, 'plotIt'); end
+            if isfield(opts, 'verbose'); verbose = logical(opts.verbose); opts = rmfield(opts, 'verbose'); end
+            merged = obj.fitOptions;
+            for f = fieldnames(opts)'
+                if isempty(opts.(f{1}))
+                    if isfield(merged, f{1}); merged = rmfield(merged, f{1}); end
+                else
+                    merged.(f{1}) = opts.(f{1});
+                end
+            end
+            obj.fitOptions = merged;
+
+            try
+                [rec, outs] = ExpFit.run(obj, spec, view, merged, plotIt, verbose);
+            catch err
+                obj.fitError = err.message;
+                obj.sendEvent(struct(obj.EVENT_FIT_UPDATED, true));
+                rethrow(err);
+            end
+            obj.fitError = '';
+            obj.fits.(view) = rec;
+            obj.dataVersion = obj.dataVersion + 1;
+            obj.syncSaveStruct();
+            obj.redrawFit(view);
+            obj.sendEvent(struct(obj.EVENT_FIT_UPDATED, true, obj.EVENT_SAVE_STATE, true));
+            if nargout > 0
+                if numel(outs) == 1; varargout{1} = outs{1}; else; varargout{1} = outs; end
+            end
+        end
+
+        function clearFit(obj, view)
+            %CLEARFIT Remove the fit from the window, and from what a save writes.
+            %   a.clearFit          % the view the window shows
+            %   a.clearFit('all')
+            if ~exist('view', 'var') || isempty(view); view = obj.currentView(); end
+            if strcmpi(view, 'all')
+                views = ExpFit.VIEWS;
+            else
+                views = {obj.checkView(view)};
+            end
+            for v = views
+                obj.fits.(v{1}) = [];
+            end
+            obj.fitError = '';
+            obj.dataVersion = obj.dataVersion + 1;
+            obj.syncSaveStruct();
+            obj.redrawFit(obj.currentView());
+            obj.sendEvent(struct(obj.EVENT_FIT_UPDATED, true, obj.EVENT_SAVE_STATE, true));
+        end
+
+        function requestFit(obj)
+            % The window's Fit button. During a run the fit waits for the current average to
+            % end: fitting mid-average would hold the acquisition up at an arbitrary point.
+            if obj.isRunning
+                obj.fitRequested = true;
+                obj.sendEvent(struct(obj.EVENT_FIT_UPDATED, true));
+            else
+                obj.fit();
+            end
+        end
+
+        function rec = fitOf(obj, view)
+            % The fit record of a view (see ExpFit), [] if there is none.
+            rec = [];
+            if isstruct(obj.fits) && isfield(obj.fits, view)
+                rec = obj.fits.(view);
+            end
+        end
+
+        function tf = canFit(obj)
+            % Whether the window can offer a fit: a spec, its fitter on the path, and a 1D plot
+            % drawn by Experiment.plotResults (a class that draws its own would not show it).
+            spec = obj.fitSpec();
+            tf = ~isempty(spec) && ExpFit.isAvailable(spec) && obj.usesBasePlot() && obj.nDim == 1;
+        end
+
+        function view = currentView(obj)
+            % What the window shows: 'normal', 'alternate' (displayType2) or 'raw' (the
+            % detection windows themselves).
+            if obj.isPlotRaw && obj.hasRawView()
+                view = 'raw';
+            elseif obj.isPlotAlternate
+                view = 'alternate';
+            else
+                view = 'normal';
+            end
+        end
+
+        function tf = hasRawView(obj)
+            tf = obj.isPlotRawAvailable && obj.usesBasePlot() && obj.nDim == 1;
+        end
+
+        function [x, traces] = viewTraces(obj, view)
+            % The traces a view shows, as plain vectors. traces(k): name, y, e, and raw (true
+            % for counts -- kcps or V -- rather than a ratio).
+            switch obj.checkView(view)
+                case 'raw'
+                    params = obj.rawSignal();
+                case 'alternate'
+                    params = obj.alternateSignal();
+                otherwise
+                    params = {obj.signalParam, obj.signalParam2, {'yParam', 'yParam2'}};
+            end
+            x = obj.mCurrentXAxisParam.value;
+            ps = {};
+            if iscell(params)
+                keys = params{end};
+                for i = 1:numel(keys)
+                    switch keys{i}
+                        case 'yParam'
+                            ps{end+1} = params{i}; %#ok<AGROW>
+                        case {'yParam2', 'yParam2+'}
+                            if iscell(params{i}); ps = [ps, params{i}]; else; ps{end+1} = params{i}; end %#ok<AGROW>
+                        case 'xParam'
+                            x = params{i}.value;
+                    end
+                end
+            elseif ~isempty(params)
+                ps = {params};
+            end
+            traces = struct('name', {}, 'y', {}, 'e', {}, 'raw', {}, 'label', {});
+            for i = 1:numel(ps)
+                p = ps{i};
+                if ~isa(p, 'ExpParameter') || isempty(p.value); continue; end
+                name = p.desc;      % the legend's name; '' for a lone unnamed trace
+                if isempty(name) && numel(ps) > 1; name = sprintf('trace %d', i); end
+                [~, label] = obj.plotLabels(obj.mCurrentXAxisParam, p, ~strcmp(view, 'normal'), strcmp(view, 'raw'));
+                traces(end+1) = struct('name', name, 'y', reshape(p.value, 1, []), ...
+                    'e', reshape(p.sterr, 1, []), 'raw', ~strcmpi(p.units, 'Normalized'), ...
+                    'label', label); %#ok<AGROW>
+            end
+        end
+
+        function params = rawSignal(obj)
+            % RAWSIGNAL The raw view: every detection window on its own, averaged, before any
+            % ratio, in the detector's units. Same format as alternateSignal; the names come
+            % from rawWindowNames.
+            units = Spcm.signalUnits();
+            n = min(obj.currIter, size(obj.signal, 3));
+            if n == 0 || isempty(obj.signal) || ndims(obj.signal) ~= 3
+                params = ExpResultDoubleVector('fluorescence', [], [], units, obj.NAME);
+                return
+            end
+            nWin = size(obj.signal, 1);
+            names = obj.rawWindowNames(nWin);
+            for k = numel(names)+1 : nWin
+                names{k} = sprintf('window %d', k);
+            end
+            p = cell(1, nWin);
+            for k = 1:nWin
+                S = reshape(obj.signal(k, :, 1:n), [], n);
+                E = reshape(obj.sterr(k, :, 1:n), [], n);
+                if n > 1
+                    E = obj.getCombinedSterr(S, E);
+                    S = mean(S, 2);
+                end
+                p{k} = ExpResultDoubleVector('fluorescence', S, E, units, obj.NAME, names{k});
+            end
+            if nWin == 1
+                params = p{1};
+            else
+                params = {p{1}, p(2:end), {'yParam', 'yParam2+'}};
+            end
+        end
+
+        function names = rawWindowNames(obj, nWin) %#ok<INUSL>
+            % What each detection window measures, for the raw view's legend. Subclasses
+            % override this with their own (rows of obj.signal, in order).
+            if nWin == 2
+                names = {'signal', 'reference'};
+            else
+                names = arrayfun(@(k) sprintf('window %d', k), 1:nWin, 'UniformOutput', false);
+            end
+        end
+
+        function varargout = saveToFile(obj, path)
+            %SAVETOFILE Save this run now: data, parameters and fits.
+            %
+            %   a.saveToFile             % over the file this run was saved to; if none, where
+            %                            % the autosave would have put it (_AutoSave)
+            %   a.saveToFile(fullPath)   % somewhere else
+            %
+            % For runs with shouldAutosave = false, and for fits added after the autosave. The
+            % window's plot (.png and .fig, fit included) is saved next to it, as always.
+            if obj.currIter == 0
+                obj.sendWarning(sprintf('%s has no data: nothing to save.', obj.name));
+                if nargout > 0; varargout{1} = ''; end
+                return
+            end
+            sl = SaveLoad.getInstance(Savable.CATEGORY_EXPERIMENTS);
+            key = matlab.lang.makeValidName(obj.name);
+            haveSnapshot = strcmp(obj.current, obj.NAME) && isstruct(sl.mLocalSaveStruct) ...
+                && isfield(sl.mLocalSaveStruct, key) && ischar(sl.mLoadedFileName);
+            if ~haveSnapshot
+                % Another experiment ran after this one, and SaveLoad holds its snapshot.
+                Experiment.getSetCurrentExp(obj.NAME);
+                sl.saveParamsToLocalStruct();
+                warning('Experiment:saveSnapshot', ['%s: another experiment ran after this one, so ' ...
+                    'the setup''s parameters saved with it (lasers, stage, ...) are as they are now, not ' ...
+                    'as they were during the run. Its own parameters, data and fits are its own.'], obj.name);
+            end
+            sl.saveResultsToLocalStruct();
+            if ~exist('path', 'var') || isempty(path)
+                if ~isempty(obj.savedFile)
+                    path = obj.savedFile;
+                else
+                    path = [SaveLoad.PATH_DEFAULT_AUTO_SAVE, sl.mLoadedFileName];
+                end
+            end
+            if ~endsWith(path, SaveLoad.SAVE_FILE_SUFFIX)
+                path = [path, SaveLoad.SAVE_FILE_SUFFIX];
+            end
+            sl.saveLocalStructToFile(path);     % its event saves the plot and marks this run saved
+            fprintf('%s saved to %s\n', obj.name, path);
+            if nargout > 0; varargout{1} = path; end
+        end
+
+        function [state, detail] = saveStatus(obj)
+            %SAVESTATUS Whether this run is saved, for the window.
+            %   state: 'empty' | 'running' | 'unsaved' | 'saved' | 'modified'
+            %   detail: a line saying more (for 'saved', the file)
+            if obj.isRunning
+                state = 'running';
+                if obj.shouldAutosave
+                    detail = 'autosaves when the run ends';
+                else
+                    detail = 'autosave is OFF for this run';
+                end
+            elseif obj.currIter == 0
+                state = 'empty';
+                detail = 'no data yet';
+            elseif isempty(obj.savedFile)
+                state = 'unsaved';
+                detail = 'not saved';
+            elseif obj.savedVersion == obj.dataVersion
+                state = 'saved';
+                detail = obj.savedFile;
+            else
+                state = 'modified';
+                detail = sprintf('changed since it was saved to %s', obj.savedFile);
+            end
+        end
+    end
+
+    methods (Access = protected)
+        function fitDuringRun(obj, atEnd)
+            % Called by run: after each average (atEnd = false) and when the run ends. Fits if
+            % Auto-fit asks for it here, or the window's Fit button was pressed during the run.
+            want = obj.fitRequested || strcmp(obj.autoFit, 'average') ...
+                || (atEnd && strcmp(obj.autoFit, 'end'));
+            if ~want || obj.currIter == 0 || ~obj.canFit()
+                if atEnd; obj.fitRequested = false; end
+                return
+            end
+            verbose = obj.fitRequested || atEnd;    % not a report after every average
+            obj.fitRequested = false;
+            try
+                obj.fit(struct('verbose', verbose));
+            catch err
+                warning('Experiment:autoFit', '%s: the fit failed: %s', obj.name, err.message);
+            end
+        end
+
+        function syncSaveStruct(obj)
+            % Bring SaveLoad's copy of this run up to date after a fit changed, so the autosave
+            % at the end of a run writes the fit made just before it. During a run there is no
+            % need: the data-updated event after every average does it.
+            if obj.isRunning || ~strcmp(obj.NAME, obj.current); return; end
+            sl = SaveLoad.getInstance(Savable.CATEGORY_EXPERIMENTS);
+            if isstruct(sl.mLocalSaveStruct) ...
+                    && isfield(sl.mLocalSaveStruct, matlab.lang.makeValidName(obj.name))
+                sl.saveResultsToLocalStruct();
+            end
+        end
+
+        function redrawFit(obj, view)
+            % Draw a view's fit on the window, if the window shows that view.
+            obj.checkGraphicAxes();
+            if isempty(obj.gAxes) || obj.nDim ~= 1 || ~obj.usesBasePlot() ...
+                    || ~strcmp(view, obj.currentView())
+                return
+            end
+            ExpFit.drawOverlay(obj.gAxes, obj.fitOf(view), obj.currIter);
+        end
+
+        function tf = usesBasePlot(obj)
+            % True if this class plots with Experiment.plotResults, which draws the fit.
+            mc = metaclass(obj);
+            m = findobj(mc.MethodList, 'Name', 'plotResults');
+            tf = ~isempty(m) && strcmp(m(1).DefiningClass.Name, 'Experiment');
+        end
+
+        function view = checkView(obj, view)
+            view = lower(char(view));
+            if ~ismember(view, ExpFit.VIEWS)
+                obj.sendError(sprintf('Unknown view ''%s''. Views: %s.', view, strjoin(ExpFit.VIEWS, ', ')));
+            end
+        end
+    end
+
     methods (Access = private)
         function savePlot(obj, folder, filename)
             % Saves the plot from the Experiment as .png and .fig files
@@ -839,9 +1236,10 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             end
         end
         
-        function [xLabel, yLabel] = plotLabels(obj, xAxisParam, dataParam, isAlternate)
+        function [xLabel, yLabel] = plotLabels(obj, xAxisParam, dataParam, isAlternate, isRaw)
             % Axis labels for the experiment window: the plotXLabel / plotYLabel /
             % plotYLabelAlternate a subclass set, else the ones built from the parameters.
+            if ~exist('isRaw', 'var'); isRaw = false; end
             xLabel = xAxisParam.label;
             if ~isempty(obj.plotXLabel) && isequal(xAxisParam, obj.mCurrentXAxisParam)
                 xLabel = obj.plotXLabel;    % not when an alternate view brings its own x axis
@@ -850,7 +1248,9 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             % 'kcps' in a parameter's units is wrong when the detector is the photodiode
             % (it reads volts), and many experiments still say it. Fix it here for all of them.
             yLabel = Spcm.localiseUnits(dataParam.label);
-            if isAlternate
+            if isRaw
+                % the raw windows' own label: fluorescence, in the detector's units
+            elseif isAlternate
                 if ~isempty(obj.plotYLabelAlternate); yLabel = obj.plotYLabelAlternate; end
             elseif ~isempty(obj.plotYLabel)
                 yLabel = obj.plotYLabel;
@@ -867,10 +1267,16 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 return
             end
             
-            % Check whether we have an alternate plot
-            isAlternate = obj.isPlotAlternate && obj.currIter > 0;
+            % Check whether we have an alternate plot (or the raw windows)
+            view = obj.currentView();
+            isAlternate = ~strcmp(view, 'normal') && obj.currIter > 0;
+            isRaw = isAlternate && strcmp(view, 'raw');
             if isAlternate
-                params = obj.alternateSignal();
+                if isRaw
+                    params = obj.rawSignal();
+                else
+                    params = obj.alternateSignal();
+                end
                 if iscell(params) % Check if there are multiple params
                     paramsLegend = params{end};
                     if length(paramsLegend) ~= length(params) - 1
@@ -929,7 +1335,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             
             if isempty(obj.gAxes.Children)
                 % Nothing is plotted yet
-                [bottomLabel, dataLabel] = obj.plotLabels(xAxisParam, dataParam, isAlternate);
+                [bottomLabel, dataLabel] = obj.plotLabels(xAxisParam, dataParam, isAlternate, isRaw);
                 switch d
                     case 1
                         leftLabel = dataLabel;
@@ -1000,6 +1406,16 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 warning('Experiment:plotStyle', 'Experiment plot styling failed: %s', styleErr.message);
             end
 
+            % The fit of this view, if there is one. Every update replaced the lines, so it is
+            % drawn again; it says so when it saw fewer averages than the plot now shows.
+            try
+                if d == 1
+                    ExpFit.drawOverlay(obj.gAxes, obj.fitOf(view), obj.currIter);
+                end
+            catch fitErr
+                warning('Experiment:plotFit', 'Drawing the fit failed: %s', fitErr.message);
+            end
+
             obj.summaryData.x = xAxisParam.value;
             obj.summaryData.y = data';
             obj.summaryData.err = err';
@@ -1014,10 +1430,30 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         function onEvent(obj, event)
             if strcmp(event.creator.name, SaveLoadCatExp.NAME) ...
                     && isfield(event.extraInfo, SaveLoad.EVENT_SAVE_SUCCESS_LOCAL_TO_FILE) ...
-                    
+
                 folder = event.extraInfo.(SaveLoad.EVENT_FOLDER);
                 filename = event.extraInfo.(SaveLoad.EVENT_FILENAME);
                 obj.savePlot(folder, filename);
+                if strcmp(obj.NAME, obj.current)    % SaveLoad saves the current experiment
+                    obj.savedFile = PathHelper.joinToFullPath(folder, filename);
+                    obj.savedVersion = obj.dataVersion;
+                    obj.sendEvent(struct(obj.EVENT_SAVE_STATE, true));
+                end
+                return
+            end
+
+            if strcmp(event.creator.name, SaveLoadCatExp.NAME) ...
+                    && isfield(event.extraInfo, SaveLoad.EVENT_LOAD_SUCCESS_LOCAL_TO_SYSTEM)
+                % A file was loaded into the experiments. If this one was in it, it now
+                % matches that file.
+                sl = event.creator;
+                if isstruct(sl.mLocalSaveStruct) ...
+                        && isfield(sl.mLocalSaveStruct, matlab.lang.makeValidName(obj.name)) ...
+                        && ischar(sl.mLoadedFileFullPath)
+                    obj.savedFile = sl.mLoadedFileFullPath;
+                    obj.savedVersion = obj.dataVersion;
+                    obj.sendEvent(struct(obj.EVENT_SAVE_STATE, true, obj.EVENT_FIT_UPDATED, true));
+                end
                 return
             end
             
@@ -1440,6 +1876,14 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             obj.currIter = 0;
             obj.currParamIter = 0;
             obj.averagesTimeStamp = zeros(obj.averages, 6);
+
+            % A new run: no fits, not saved yet
+            obj.fits = struct('normal', [], 'alternate', [], 'raw', []);
+            obj.fitRequested = false;
+            obj.savedFile = '';
+            obj.dataVersion = obj.dataVersion + 1;
+            obj.sendEvent(struct(obj.EVENT_FIT_UPDATED, true, obj.EVENT_SAVE_STATE, true));
+
             obj.plotResults;     % Update the plot
             
             %clear the timetagger measurement if it exists - added by rotem 18.4.21
@@ -1880,7 +2324,10 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             Experiment.getSetCurrentExp(obj.NAME);
             
             sl = SaveLoad.getInstance(Savable.CATEGORY_EXPERIMENTS);
-            if ~isfield(sl.mLocalSaveStruct, obj.NAME)
+            % The struct's field is the name made valid ('AWG ESR' -> 'AWG_ESR'). Testing the
+            % name itself always failed, so every save re-took the parameter snapshot.
+            if ~isstruct(sl.mLocalSaveStruct) ...
+                    || ~isfield(sl.mLocalSaveStruct, matlab.lang.makeValidName(obj.name))
                 sl.saveParamsToLocalStruct();
             end
             sl.saveResultsToLocalStruct();

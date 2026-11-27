@@ -380,7 +380,11 @@ classdef AWGExpESR < ExperimentAWG
     end
     
     methods
-        
+        function spec = fitSpec(obj)
+            % The experiment window's fit: esrFitRobust (see ExpFit)
+            spec = ExpFit.esr(obj);
+        end
+
         function obj = AWGExpESR(passedExpName)
             
             if nargin == 1
@@ -414,7 +418,8 @@ classdef AWGExpESR < ExperimentAWG
             
             obj.displayType2 = 'Raw signal (kcps)';   % the window shows 'Raw signal (V)' with the photodiode (Spcm.localiseUnits)
             obj.isPlotAlternateAvailable = true;
-            
+            obj.isPlotRawAvailable = false;           % the alternate view already is the raw one
+
             obj.mCurrentXAxisParam = ExpParamDoubleVector('Frequency', [], [], 'MHz', obj.NAME);
             % Labels as in the robust fit's figure (ExpPlotStyle / fitStyle)
             obj.plotXLabel = ExpPlotStyle.X_FREQUENCY;

@@ -132,6 +132,17 @@ classdef AWGExpT1 < ExperimentAWG
     
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     methods
+        function spec = fitSpec(obj)
+            % The experiment window's fit: t1FitRobust (see ExpFit)
+            spec = ExpFit.t1(obj);
+        end
+
+        function names = rawWindowNames(~, ~)
+            % Rows of obj.signal, for the window's raw view: rows 1-2 are the |0> relaxation
+            % (no pi pulse), rows 3-4 the |1> one
+            names = {'|0> signal', '|0> reference', '|1> signal', '|1> reference'};
+        end
+
         function obj = AWGExpT1()
             % AWGExpT1.NAME, not AWGExpRamsey.NAME.
             %

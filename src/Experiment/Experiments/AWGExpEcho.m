@@ -113,6 +113,16 @@ classdef AWGExpEcho < ExperimentAWG
 
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     methods
+        function spec = fitSpec(obj)
+            % The experiment window's fit: echoFitRobust (see ExpFit)
+            spec = ExpFit.echo(obj);
+        end
+
+        function names = rawWindowNames(~, ~)
+            % Rows of obj.signal, for the window's raw view: rows 1-2 |1>, rows 3-4 |0>
+            names = {'|1> signal', '|1> reference', '|0> signal', '|0> reference'};
+        end
+
         function obj = AWGExpEcho()
             obj@ExperimentAWG(AWGExpEcho.NAME);
             obj.parameterName = 'taus';

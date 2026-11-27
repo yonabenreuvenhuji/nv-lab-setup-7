@@ -102,6 +102,16 @@ classdef AWGExpRabi < ExperimentAWG
     end
 
     methods
+        function spec = fitSpec(obj)
+            % The experiment window's fit: rabiFitRobust (see ExpFit)
+            spec = ExpFit.rabi(obj);
+        end
+
+        function names = rawWindowNames(~, ~)
+            % Rows of obj.signal, for the window's raw view
+            names = {'signal (after the MW pulse)', 'reference'};
+        end
+
         function obj = AWGExpRabi()
             obj@ExperimentAWG(AWGExpRabi.NAME);
             obj.parameterName = 'taus';

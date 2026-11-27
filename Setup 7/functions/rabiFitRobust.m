@@ -241,6 +241,13 @@ function out = rabiFitRobust(args)
     out.coeffError = [out.amplitudeErr, out.x0Err, out.TErr, out.fErr, out.centreErr];
     out.opts = opts;
 
+    % For the experiment window (ExpFit): the curve the figure draws and the figure's title,
+    % so the window shows the same fit as this figure. The handle keeps a copy of out without
+    % the experiment object in it.
+    oc = out; oc.opts.exp = [];
+    out.curveAt = @(tt) rabiCurveAt(oc, tt);
+    try; out.titleLines = rabiTitle(out); catch; out.titleLines = {}; end
+
     if opts.verbose; showReport(out); end
     if opts.plotIt; showPlots(out); end
     if opts.save
@@ -740,9 +747,7 @@ function showPlots(o)
 % in black, and orange is needed for a second data series the moment there is one.
     S = fitStyle();
     tf = linspace(min(o.t), max(o.t), 2000)';
-    op = o.opts; op.nFreq = numel(o.fAll);
-    Xf = designMatrix(tf, o.fAll, o.lambda, o.q, op);
-    yf = Xf*o.linCoeffs;
+    yf = rabiCurveAt(o, tf)';
 
     fig = S.newFigure('Rabi', o.opts.showResid);
     if o.opts.showResid
@@ -805,6 +810,13 @@ function showPlots(o)
         S.title(ax2, sprintf('dashed = fitted %s MHz', ...
                              strjoin(cellstr(num2str(o.fAll(:), '%.3f'))', ', ')));
     end
+end
+
+function yf = rabiCurveAt(o, tt)
+% The fitted curve at any tau, as one row -- what showPlots draws.
+    op = o.opts; op.nFreq = numel(o.fAll);
+    Xf = designMatrix(tt(:), o.fAll, o.lambda, o.q, op);
+    yf = reshape(Xf*o.linCoeffs, 1, []);
 end
 
 function s = yLabelOf(o, S)

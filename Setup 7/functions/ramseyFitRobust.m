@@ -459,8 +459,19 @@ function out = ramseyFitRobust(args)
     o.coeffError = [o.T2starErr, o.deltaErr, o.contrastErr, o.pErr];
     out = o; out.opts = opts;
 
+    % For the experiment window (ExpFit): the curves the figure draws (one row per
+    % projection) and the figure's title, so the window shows the same fit as this figure.
+    oc = out; oc.opts.exp = [];
+    out.curveAt = @(tt) ramseyCurveAt(oc, tt);
+    try; out.titleLines = titleLines(out); catch; out.titleLines = {}; end
+
     if opts.verbose;  report(out);  end
     if opts.plotIt;   drawIt(out);  end
+end
+
+function M = ramseyCurveAt(o, tt)
+% The fitted model at any tau, one row per projection -- what drawIt draws.
+    M = modelOf(paramVec(o), reshape(tt, 1, []), linFromModel(o), o.A, o.nHyperfine);
 end
 
 % ======================================================================
@@ -1081,7 +1092,7 @@ function drawIt(o)
 
     td = linspace(min(o.t), max(o.t), 1500);
     lin = linFromModel(o);
-    Md = modelOf(paramVec(o), td, lin, o.A, o.nHyperfine);
+    Md = ramseyCurveAt(o, td);
 
     H = []; L = {};
     for i = 1:o.traces

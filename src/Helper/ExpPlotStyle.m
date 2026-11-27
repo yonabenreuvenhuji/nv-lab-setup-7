@@ -77,11 +77,14 @@ classdef ExpPlotStyle
             end
 
             % --- the series. Children are newest-first, so flip to drawing order: the first
-            % signal gets orange (s1), the second purple (s2), the third slate (s3).
+            % signal gets blue (s1), the second amber (s2), the third slate (s3).
             kids = flipud(gAxes.Children(:));
             k = 0;
             for i = 1:numel(kids)
                 h = kids(i);
+                if strcmp(h.Tag, 'ExpFitOverlay')   % ExpFit.TAG: a fit curve, not a series
+                    continue
+                end
                 if any(strcmp(h.Type, {'errorbar', 'line'}))
                     k = k + 1;
                     ExpPlotStyle.styleSeries(h, k, C);
@@ -162,10 +165,10 @@ classdef ExpPlotStyle
                 'surface', [252 252 251]/255, ...
                 'ink',     [ 20  20  20]/255, ...
                 'ink2',    [ 82  81  78]/255, ...
-                's1',      [235 104  52]/255, ...   % orange, default
-                's2',      [122  61 148]/255, ...   % purple
+                's1',      [ 58 111 216]/255, ...   % blue, default
+                's2',      [230 154  28]/255, ...   % amber
                 's3',      [107 120 133]/255, ...   % slate
-                'fit',     [ 20  20  20]/255, ...
+                'fit',     [176  48  42]/255, ...   % brick red
                 'env',     [107 120 133]/255, ...
                 'flag',    [ 20  20  20]/255, ...
                 'band',    [219 224 232]/255);

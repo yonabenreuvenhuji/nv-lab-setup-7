@@ -2,6 +2,9 @@
 % Run the session cell first, and again after re-running main.
 % Walk mode, newOrderEveryAverage and the CW-ESR window are class defaults: no need to set them.
 % Fits take one struct and return one struct: o = rabiFitRobust(struct('exp', b)).
+% o = b.fit is the same call, and also draws the fit on the experiment window and saves it
+% with the run (b.fit(struct('nFreq', 2)) for options; b.autoFit = 'end' fits every run).
+% b.saveToFile saves a run that was not autosaved (shouldAutosave = false), fits included.
 
 %% Start of session
 [jsonLocation, h, awg] = setup7Session;     % setup7Session('2026-08-14') pins an older calibration

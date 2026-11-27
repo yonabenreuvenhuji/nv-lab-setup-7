@@ -3,7 +3,7 @@ function S = fitStyle()
 %
 %   S = fitStyle;
 %   ax = S.axes(S.newFigure('Rabi'));
-%   h1 = S.data(ax, t, y, e, S.col.s1);     % orange, connected, filled markers
+%   h1 = S.data(ax, t, y, e, S.col.s1);     % blue, connected, filled markers
 %   hF = S.model(ax, tf, yf);               % near-black, on top
 %   S.headroom(ax, 0.28); S.legend(ax, [h1 hF], {'measured', 'fit'});
 %   S.title(ax, {'line one', 'line two'});
@@ -31,44 +31,25 @@ function S = fitStyle()
 %   than a cloud. See connect below for the one place it is switched off, which matters.
 %
 % ===================================================================
-% THE PALETTE -- COMPUTED, NOT CHOSEN
+% THE PALETTE -- CHOSEN BY EYE ON RENDERED ESR AND RAMSEY FIGURES (2026-11-27)
 % ===================================================================
 %
-% Every number below is OKLab dE x100, measured on this palette with dichromat simulation
-% (Vienot-Brettel-Mollon), against the usual bars: normal-vision dE >= 15, worst-case
-% colour-vision-deficient dE >= 8, and >= 3:1 contrast on the surface.
-%
-%   s1  orange  #eb6834   first series, and the DEFAULT for a single trace
-%   s2  purple  #7a3d94   second series (|0> where |1> is s1)
+%   s1  blue    #3a6fd8   first series, and the DEFAULT for a single trace
+%   s2  amber   #e69a1c   second series (|0> where |1> is s1)
 %   s3  slate   #6b7885   a third, e.g. a repeat run kept as a drift control
-%   fit ink     #141414   the model. Not a categorical hue -- see below.
+%   fit brick   #b0302a   the model
 %
-%       pair                normal   protan  deutan  tritan   contrast on surface
-%       orange / purple      29.4     27.9    31.8    24.5    3.12:1  and  7.00:1
-%       orange / slate       19.7     14.7    17.0    19.0    3.12:1  and  4.40:1
-%       purple / slate       24.4     24.6    20.3    22.1
-%       orange / fit         51.0     44.0    52.3    51.1
-%       purple / fit         32.0     28.6    30.9    27.6
+% It replaced orange/purple data with a near-black fit. The blue is a little bluer than
+% indigo so it does not drift toward the brick red. The fit is a hue no data series uses:
+% warm against the blue, darker than the amber, so it reads as "the model" with one series
+% or two. (An earlier note here found blue points under a near-black fit hard to read -- two
+% dark marks of similar weight. A red curve on blue points is separated by hue instead.)
+% Change it here AND in ExpPlotStyle.fallbackCol.
 %
-% ORANGE IS THE DEFAULT DATA COLOUR, and the reason is not dE. Blue #2a78d6 against the
-% near-black fit measures dE 41.7, which passes comfortably -- so by the numbers the old pair
-% was fine, and it still read badly. The problem was FIGURE-GROUND, not separation: a 2 px
-% near-black curve threading through 5 px blue markers is two dark marks of similar weight,
-% and the eye cannot tell which one it is meant to follow. Orange sits at 3.12:1 on the
-% surface against the fit's 17.95:1, so there is a real lightness hierarchy and the fit is
-% unambiguously the thing on top. dE tells you whether two colours are distinguishable side
-% by side; it does not tell you which one recedes.
-%
-% THE MODEL IS INK, not a hue. Orange and purple are needed for identity the moment there are
-% two data series -- Ramsey has two projections -- so the fit cannot hold either. A fit is an
-% overlay on the same entity anyway, not a series of its own, so it gets ink weight.
-%
-% THE FLAG IS AN INK SQUARE, NOT A RED RING. Crimson #c81c2e against orange measures dE 14.9
-% normal and 13.2 worst-case CVD -- under the 15 floor, i.e. a red ring on an orange point is
-% genuinely hard to place, which is what happens now that orange is the default. Ink at
-% 51.0/44.0 is the best-separated option available, and a SQUARE distinguishes it from the
-% fit's line by shape as well as by mark type. Double-encoded, and semantically neutral --
-% a green or teal ring meaning "bad point" reads backwards.
+% THE FLAG IS AN INK SQUARE, NOT A RED RING. A red ring would now also be confused with the
+% brick-red fit (and was hard to place on the old orange points). Ink is neutral against every
+% series, and a SQUARE distinguishes it from the fit's line by shape as well as by mark type.
+% A green or teal ring meaning "bad point" reads backwards.
 %
 % envelope  slate dashed, recessive: a reading aid for a decay, not a measurement
 % band      pale grey fill, for a +/- 1 sigma region
@@ -94,10 +75,10 @@ function S = fitStyle()
         'surface', [252 252 251]/255, ...
         'ink',     [ 20  20  20]/255, ...
         'ink2',    [ 82  81  78]/255, ...
-        's1',      [235 104  52]/255, ...   % orange, default
-        's2',      [122  61 148]/255, ...   % purple
+        's1',      [ 58 111 216]/255, ...   % blue, default
+        's2',      [230 154  28]/255, ...   % amber
         's3',      [107 120 133]/255, ...   % slate
-        'fit',     [ 20  20  20]/255, ...
+        'fit',     [176  48  42]/255, ...   % brick red
         'env',     [107 120 133]/255, ...
         'flag',    [ 20  20  20]/255, ...
         'band',    [219 224 232]/255);

@@ -636,8 +636,20 @@ function out = echoFitRobust(args)
     out = o; out.opts = opts;
     if ~isempty(pullInfo); out.pull = pullInfo; end
 
+    % For the experiment window (ExpFit): the curves the figure draws (one row per
+    % projection) and the figure's title, so the window shows the same fit as this figure.
+    oc = out; oc.opts.exp = [];
+    out.curveAt = @(tt) echoCurveAt(oc, tt);
+    try; out.titleLines = titleLines(out); catch; out.titleLines = {}; end
+
     if opts.verbose;  report(out);  end
     if opts.plotIt;   drawIt(out);  end
+end
+
+function M = echoCurveAt(o, tt)
+% The fitted model at any t, one row per projection -- what drawIt draws.
+    nLin = 2 + double(o.opts.fitDrift);
+    M = modelOf(paramVec(o), reshape(tt, 1, []), linFromModel(o), nLin, o.revivalsUsed);
 end
 
 % ======================================================================
@@ -1526,7 +1538,7 @@ function drawIt(o)
     lin = linFromModel(o);
     nLin = 2 + double(o.opts.fitDrift);
     P = paramVec(o);
-    Md = modelOf(P, td, lin, nLin, o.revivalsUsed);
+    Md = echoCurveAt(o, td);
     Ed = envelopeOf(P, td, lin, nLin);
 
     H = []; L = {};

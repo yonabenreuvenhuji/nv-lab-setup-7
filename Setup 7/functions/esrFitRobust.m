@@ -338,8 +338,29 @@ function out = esrFitRobust(args)
     end
     out.ok = true;
 
+    % For the experiment window (ExpFit): the curve the figure draws and the figure's title,
+    % so the window shows the same fit as this figure. The handle keeps a copy of out without
+    % the experiment object in it.
+    oc = out; oc.opts.exp = [];
+    out.curveAt = @(ff) esrCurveAt(oc, ff);
+    try; out.titleLines = esrTitle(out); catch; out.titleLines = {}; end
+
     if opts.verbose; report(out, K); end
     if opts.plotIt;  drawIt(out); end
+end
+
+function yy = esrCurveAt(o, ff)
+% The fitted curve as drawIt draws it, as one row: the line model, with a resolved multiplet
+% spliced in over its window, and NaN at the window's edges so no vertical connector is drawn.
+    ff = ff(:);
+    yy = o.modelAt(ff);
+    hf = o.hyperfine;
+    if hf.resolved
+        inW = ff >= hf.window(1) & ff <= hf.window(2);
+        yy(inW) = hf.modelAt(ff(inW));
+        yy(find(diff(inW)) + 1) = NaN;
+    end
+    yy = reshape(yy, 1, []);
 end
 
 % ======================================================================
@@ -2312,13 +2333,10 @@ function drawIt(o)
     H = []; Lg = {};
     H(end+1) = S.data(ax, o.f, o.y, o.e, S.col.s1);  Lg{end+1} = 'measured';
     ff = linspace(min(o.f), max(o.f), 4000)';
-    yy = o.modelAt(ff);
+    yy = esrCurveAt(o, ff)';                      % the multiplet spliced in, if resolved
     fitLabel = 'fit';
     hf = o.hyperfine;
     if hf.resolved
-        inW = ff >= hf.window(1) & ff <= hf.window(2);
-        yy(inW) = hf.modelAt(ff(inW));
-        yy(find(diff(inW)) + 1) = NaN;            % no vertical connector at the window edge
         fitLabel = sprintf('fit (%s)', hfLabel(hf));
     end
     R = o.resonance;
