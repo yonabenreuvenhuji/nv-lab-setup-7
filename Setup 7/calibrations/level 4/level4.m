@@ -239,11 +239,11 @@ end
 %   about a dozen times instead of once per tau. Its possible contrast bias does not matter
 %   when all that is wanted is a frequency to size the next pass with.
 %
-%   FINE, classic mode, high repeats. This is the measurement, so it uses the transport that
-%   has been validated for data. repeats is the cheap axis: 4000 repeats costs photons (~55 us
-%   each) and no re-arms, while every extra tau point costs a 0.6 s re-arm per average. So
-%   repeats are high, the spacing is dense (13 points per period), and the tau list is only as
-%   long as the fit needs -- six periods. Expect 4-6 minutes.
+%   FINE, walk mode too, high repeats. This is the measurement: 4000 repeats (photons, ~55 us
+%   each), dense spacing (13 points per period) over six periods. Walk re-arms per pg.run, not
+%   per tau, so the tau points are cheap. Only f and the phase feed the pulse times, so walk's
+%   possible contrast bias does not move them. Add 'fineWalk', false to run it classic (a
+%   re-arm per tau, 4-6 minutes) as a cross-check.
 %
 % THEN IT CHECKS ITSELF, which is the part worth waiting for. The fine curve is fitted three
 % times: whole, first half, second half. If the halves disagree by more than 3 sigma on pi,

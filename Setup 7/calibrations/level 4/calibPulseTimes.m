@@ -53,7 +53,7 @@ function out = calibPulseTimes(opts)
 % while Rabi contrast is fine, this is the first thing to suspect.
 %
 % ===================================================================
-% THE TWO-PASS SCAN, AND WHY EACH PASS USES A DIFFERENT TRANSPORT
+% THE TWO-PASS SCAN
 % ===================================================================
 %
 % COARSE, in WALK mode. Only needs the period, so it can be cheap. Walk re-arms once per
@@ -61,11 +61,12 @@ function out = calibPulseTimes(opts)
 % than 99 -- about 12 against 99, which is 50 s saved on a pass whose only job is sizing the
 % next one. Walk's possible contrast bias does not matter when all that is wanted is f.
 %
-% FINE, in CLASSIC mode with high repeats. This is the measurement, so it takes the transport
-% that has been validated for data. repeats is the cheap axis here: it costs photons (~55 us
-% per repeat) and no re-arms, so 4000 repeats buys sqrt(13) better SNR than 300 for about
-% 50 s. The re-arm count, nTau*averages*0.6 s, is what actually sets the run time -- which is
-% why the tau list is sized to just cover what the fit needs and not more.
+% FINE, also in WALK mode (fineWalk, default true), with high repeats. This is the measurement.
+% repeats is the cheap axis: it costs photons (~55 us per repeat), so 4000 repeats buys
+% sqrt(13) better SNR than 300. Walk re-arms once per pg.run rather than once per tau, so the
+% dense tau list no longer sets the run time. Only f and the phase offset feed the pulse times,
+% so a contrast bias would not move them. fineWalk = false runs the old classic transport (a
+% 0.6 s re-arm per tau per average), e.g. to cross-check walk.
 %
 % ===================================================================
 % THE SELF-CHECK
@@ -102,10 +103,10 @@ function out = calibPulseTimes(opts)
 %   coarseRepeats, coarseAverages   (defaults 300, 2)
 %   detectionDuration   us (default [] = the json's; this is the PULSED window)
 %   nChannels, frequency, amplitudeDiff, channelPhase, isTracking, jsonLocation, plotIt
-%   newOrderEveryAverage  a new random tau order before every average (true/false). Only the
-%                  COARSE pass walks, so only it is affected; the fine pass is classic and
-%                  already draws a new order every average. Default [] = AWGExpRabi's own
-%                  setting (true).
+%   fineWalk       fine pass in walk mode (default true); false = classic, a re-arm per tau
+%   newOrderEveryAverage  a new random tau order before every average (true/false), for the
+%                  walk-mode passes (classic already draws a new order every average).
+%                  Default [] = AWGExpRabi's own setting (true).
 %   stableSigma    how many sigma of half-to-half difference counts as significant (default 3)
 %   stableTolFrac  and how large a fraction of pi counts as MATTERING (default 0.02). Both
 %                  have to be exceeded before out.stable goes false. See THE SELF-CHECK.
@@ -125,7 +126,7 @@ function out = calibPulseTimes(opts)
         'coarseRepeats', 300, 'coarseAverages', 2, 'detectionDuration', [], ...
         'nChannels', 2, 'frequency', [], 'amplitudeDiff', [], 'channelPhase', [], ...
         'isTracking', 0, 'jsonLocation', '', 'plotIt', true, ...
-        'newOrderEveryAverage', [], ...
+        'newOrderEveryAverage', [], 'fineWalk', true, ...
         'stableSigma', 3, 'stableTolFrac', 0.02), 'calibPulseTimes');
 
     if isempty(opts.jsonLocation)
@@ -182,7 +183,7 @@ function out = calibPulseTimes(opts)
         end
     end
 
-    % ---- fine pass, classic, high repeats -------------------------------
+    % ---- fine pass, walk (or classic), high repeats ----------------------
     period = 1/max(fRabi, eps);
     dtau = opts.dtau;
     if isempty(dtau); dtau = max(roundTo(period/13, 3), 0.005); end
@@ -194,18 +195,33 @@ function out = calibPulseTimes(opts)
                'pass piGuess by hand.'], numel(tauList), dtau, tauMax);
     end
 
-    nRearm = numel(tauList)*opts.averages;
-    fprintf('\n--- fine pass (classic, high repeats: this is the measurement) ---\n');
+    tPhot = numel(tauList)*opts.repeats*opts.averages*55e-6;
+    if opts.fineWalk
+        fprintf('\n--- fine pass (walk mode, high repeats: this is the measurement) ---\n');
+    else
+        fprintf('\n--- fine pass (classic, high repeats: this is the measurement) ---\n');
+    end
     fprintf('  period %.4f us -> %d taus at %.3f us, spanning %.1f periods\n', ...
             period, numel(tauList), dtau, tauMax/period);
     fprintf('  %d repeats x %d averages\n', opts.repeats, opts.averages);
-    fprintf(['  cost: %d re-arms at ~0.6 s = %.0f s, plus %.0f s of photons. The re-arms are\n' ...
-             '  what you pay for tau points; repeats are nearly free, which is why they are\n' ...
-             '  high and the tau list is only as long as the fit needs.\n'], ...
-            nRearm, 0.6*nRearm, numel(tauList)*opts.repeats*opts.averages*55e-6);
+    if opts.fineWalk
+        fprintf(['  cost: about %.0f s of photons plus a re-arm per pg.run (not per tau), so\n' ...
+                 '  the dense tau list is cheap.\n'], tPhot);
+    else
+        nRearm = numel(tauList)*opts.averages;
+        fprintf(['  cost: %d re-arms at ~0.6 s = %.0f s, plus %.0f s of photons. The re-arms are\n' ...
+                 '  what you pay for tau points; repeats are nearly free, which is why they are\n' ...
+                 '  high and the tau list is only as long as the fit needs.\n'], ...
+                nRearm, 0.6*nRearm, tPhot);
+    end
 
     b = newRabi(amp, frq, det, aDiff, cPh, opts, J);
-    b.useSequenceWalk = false;      % the fine pass is classic on purpose
+    b.useSequenceWalk = logical(opts.fineWalk);
+    if opts.fineWalk
+        b.passesPerRun       = [];      % [] = derived from the digitizer ceiling
+        b.walkWarmupTriggers = 1;
+        b.resyncEveryPass    = true;
+    end
     b.repeats  = opts.repeats;
     b.averages = opts.averages;
     b.tau      = tauList;
@@ -263,10 +279,12 @@ function out = halfCheck(o, out, opts)
 % from, and there is no second copy of the signal/sterr/currIter unpacking to go stale when
 % the experiment class changes.
 %
-% The split is by tau INDEX, which in classic mode is also time order within each average --
-% the sweep runs short taus first -- so it sees drift within a sweep. It does NOT see drift
-% between averages; the fit has already absorbed that, which is what averages > 1 and the MAD
-% cut in pullData are for.
+% The split is by tau INDEX. In WALK mode (the default) every pass visits every tau, so slow
+% drift lands on all taus alike: it smears the curve but cannot make the two halves disagree,
+% and this check is then a check of linearity (below), not of drift. In classic mode an
+% ordered sweep makes tau index time order within an average, so it sees drift within a sweep.
+% Neither sees drift between averages; the fit has already absorbed that, which is what
+% averages > 1 and the MAD cut in pullData are for.
 %
 % It also fires on something that is not drift at all: a rotation angle that is not linear in
 % pulse duration. That gives a different apparent f at short and long tau, and it is the exact
@@ -488,7 +506,7 @@ function b = newRabi(amp, frq, det, aDiff, cPh, opts, J)
     b.shouldAutosave   = false;      % ~7 s per run writing a .mat nothing reads
     try; b.amplitudeDiff = aDiff; catch; end
     try; b.channelPhase  = cPh;   catch; end
-    % Walk mode only (the coarse pass); the classic fine pass ignores it.
+    % Walk mode only; a classic pass (fineWalk false) ignores it.
     if ~isempty(opts.newOrderEveryAverage)
         b.newOrderEveryAverage = logical(opts.newOrderEveryAverage);
     end

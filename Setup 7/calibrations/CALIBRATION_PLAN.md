@@ -15,7 +15,8 @@ Setup 7\
     _diagnostics\   probes and offline tests. Nothing here decides a calibrated value.
   calibrations\     level 0 .. level 4, and results\
     results\
-      2026-08-14\   expProperties.json, helmholtzState.mat
+      2026-08-14\   expProperties.json (its "Helmholtz" block holds the coil state and
+                    calibration; older folders may still have a helmholtzState.mat)
       <next one>\   a new dated folder per calibration campaign
   old files\        the archive. Nothing on the path.
 ```
@@ -47,10 +48,11 @@ whole content of the numbering.
 | 0 | dark level, laser power | off | nothing |
 | 1 | channel delays | off | 0 |
 | 2 | detection windows, last delay | off | 0, 1 |
-| 3 | field vector, alignment, operating frequency | **on** | 0–2 |
+| 3 | coil matrix (B = M·I + b0), alignment, operating frequency | **on** | 0–2 |
 | 4 | two-channel balance and phase | **on** | 0–3 |
 
-Run 0–2 after any optical or cabling change. Run 3 after moving the magnet or the sample.
+Run 0–2 after any optical or cabling change. Run 3 after moving the coils or the sample: the
+coil calibration (3.2) is what knows where the crystal axes are, so it is what goes stale.
 Run 4 after anything in the microwave chain, and after 3, because it is measured at the field
 3 chooses.
 
@@ -120,10 +122,63 @@ window with `esrWindowPick`'s CW one on every load, and `prepare` caps
 
 ## Level 3 — the field, and the operating frequency
 
-Four steps: `testFieldPipeline` (offline), `calibFieldSurvey`, `calibFieldAlign`,
-`calibB1Rabi`.
+Steps: the offline graders (`testFieldPipeline`, `testCoilMatrixFit`, `testHelmholtzLimits`),
+`calibCoilMatrix`, align with `h.alignToNV` and check with one `calibFieldSurvey`,
+`calibB1Rabi`. (Revised 2026-11: the coil calibration replaced the θ/φ alignment scan.)
 
-**Run the offline grader first, every time.** Both of the worst bugs in this chain were
+### The coil calibration, and why alignment is no longer a scan
+
+The field is modelled as **B = M·I + b0**, with B in the **NV crystal frame** — x, y, z along
+the diamond's cubic axes, as the NVs define them. M is a full 3×3 (G/A): column k is the field
+coil k makes per Ampere, so its off-diagonal terms are the cross-talk between coil axes and
+crystal axes (a turned diamond, tilted coils, coils not quite perpendicular) and its column
+lengths are the real current-to-field ratios, which had never been measured — the 5.382 /
+8.034 / 13.649 G/A in `setupInfo.json` are nominal. b0 is the field at zero current.
+
+`calibCoilMatrix` takes ~20 wide CW ESRs at coil currents spread over the supplies' range
+(`coilCurrentDesign`: a Halton sequence kept where the model in use predicts 12–40 G), fits each
+spectrum's lines with `esrFitRobust`, and `coilMatrixFit` puts one linear model through every
+line of every spectrum through the exact Hamiltonian. γ is a physical constant, so B comes out
+in absolute Gauss with nothing assumed about the coils. With M known, every NV axis sits at a
+known direction — θ = 54.7356°, φ = 45° (+k·90°) — so **aligning is `h.alignToNV(k, |B|)`**, and
+`calibFieldSurvey` checks it once.
+
+How the fit avoids its local minima (each step was forced by a failure on synthetic data):
+
+- **Each spectrum's own field, by exhaustive search** over the 1/48 wedge of directions
+  x ≥ y ≥ z ≥ 0 (the NV lines cannot tell the 48 signed permutations of B apart), with the 8
+  lines of every grid point from the closed-form cubic. `esrFieldSolve` is not used here: it
+  seeds within 25° of one NV axis, right for an alignment and wrong for a calibration — it
+  converged to a wrong field on 3 of 16 generic spectra even with exact line positions.
+- **Starts that need no guess.** |B|² is *linear* in G = MᵀM, h = Mᵀb0 and |b0|² (trimmed
+  least squares), leaving only the crystal's rotation, found by a dense rotation search; and
+  independently, RANSAC: four spectra fix M and b0 exactly once their symmetry labels are
+  chosen, all 48³ labellings are tried at once, and each is scored by how many other spectra
+  it predicts. The RANSAC start is the one that matters when a few spectra solve wrongly on
+  their own: with ~15 spectra and 10 parameters, trimming cannot tell which.
+- **The final fit** is Levenberg–Marquardt on all 13 parameters against the line centres, from
+  each start; lines further than 5 MHz from every prediction are outliers (reported), and an
+  unclaimed transition within ~4 MHz of a claimed one is averaged into its prediction, since a
+  single line fitted to a blend lands near the centroid. More than a quarter outliers ⇒ `ok =
+  false`: the orientation was not found, and nothing is applied.
+- **The gauge.** (g·M, g·b0) fits as well for all 48 signed permutations g — the freedom to
+  name the crystal axes. It is fixed by the g closest to the previous calibration (so "NV 1"
+  keeps meaning the same physical NV, which matters for B1), else to the nominal coil matrix.
+
+Graded offline by `testCoilMatrixFit` against coils with everything wrong at once (diamond
+turned up to 40°, coil axes 2–3° off square, sensitivities 10–25% off nominal, a background
+field, blends, dropped and spurious lines): aiming at an NV axis with the fitted model puts the
+true field within 0.1–0.3° of it at 20 G, set by ~0.05–0.1 G of absolute field error. Over 20
+random coil systems all converged.
+
+**Limits.** The supplies are unipolar, 0–5.2 A, so the reachable fields are the parallelepiped
+M·[box] + b0 — usually only one or two of the eight signed NV directions are reachable at all
+(`h.nvTable()`, the GUI's alignment panel). `h.limits(what)` gives the exact range of Bx, By,
+Bz, |B|, θ or φ with the other two held (linear in the parameter for the first four; a
+sinusoid per coil, solved in closed form, for the angles); `testHelmholtzLimits` checks it
+against brute force.
+
+**Run the offline graders first, every time.** Both of the worst bugs in this chain were
 invisible on real data and obvious against a known answer. The multi-line fitter could not
 split a blend, because its seeded amplitudes came from a `movmax` narrower than the lines, so
 every seed started at the noise floor. And the survey discarded correctly aligned pairs,
@@ -137,13 +192,25 @@ mirror / split / physics-seeded refits, and keeping the resonator's own dip out 
 list — is `esrFitRobust`, the same call the run script uses. For a look at the field without
 the calibration's coil-target report, `esrFitRobust(struct('exp', a))` alone is enough.
 
-`calibFieldAlign` scans θ and φ. Its metric is the **squared excess span of the inner pair,
-not the tilt**: below about 2.5° the tilt estimate collapses toward zero because the off-axis
-splittings differ by less than a linewidth, while the span keeps moving all the way to zero
-tilt.
+`calibFieldAlign` (now an optional independent check, not a step) scans θ and φ. Its metric is
+the **squared excess span of the inner pair, not the tilt**: below about 2.5° the tilt estimate
+collapses toward zero because the off-axis splittings differ by less than a linewidth, while
+the span keeps moving all the way to zero tilt. If the survey after `alignToNV` shows a tilt,
+re-run the coil calibration rather than scanning.
 
-`calibB1Rabi` scans |B| so the aligned line sweeps the antenna response, running an ESR at
-each field to find the line and a Rabi at that line to measure B1.
+`calibB1Rabi` scans |B| so the aligned line sweeps the antenna response, and at each field
+drives a Rabi on the line to measure B1.
+
+**The line is predicted, not measured, at each point (esrMode 'predict', 2026-11).** The
+2026-11-27 run measured it with an ESR at every point, and near the peak those single-line
+fits were pulled 2–4 MHz by the resonator's own dip, which the line crosses there; |B| solved
+from each whole spectrum agreed with the coil calibration to 0.39 G rms (0.08 G below 39 G).
+So: two wide anchor surveys at the ends of the range give |B| = a·Brho + b and D from whole
+spectra, every Rabi is driven at the line that implies, and one wide ESR at the optimum
+verifies it; the json gets the line that verify spectrum's |B| and D imply. 3 ESRs instead
+of ~23; `testB1Predict` grades it on a simulated rig. esrMode 'measure' is the old way.
+`calibCoilMatrix` now designs up to 48 G (`Brange` [12 48]) so this range is not an
+extrapolation, and its sweep is sized so no dip can be within 30 MHz of an edge.
 
 **The Rabi frequency *is* B1**, up to one fixed constant: Ω = γ·B1·⟨matrix element⟩, and the
 matrix element moves by under one part in 5000 across the scan, since the mixing that would
@@ -180,8 +247,14 @@ interpolator over the range just scanned, and the caller checks whether the answ
 inside it.
 
 Writes: `frequency` in the json (cell 3.5, `expPropsWrite`, only when 3.4b settled; **not**
-`resonantFrequency` — that field name never existed), and `Btheta`, `Bphi`, `Brho` in
-`helmholtzState.mat` (cells 3.3c, 3.4c).
+`resonantFrequency` — that field name never existed), and the **`"Helmholtz"` block** of the
+same json — currents, field, step sizes and the coil calibration (M, b0, their errors, D, the
+residual, the current range measured) — through `h.save(setup7Paths().json)` (cells 3.2b,
+3.3, 3.4c), which writes it with `expPropsWrite` (backup first, verified after, nothing else
+touched). Experiments ignore the block: `loadJsonParams` only copies keys that match one of
+the experiment's own properties, and none is called `Helmholtz`. `helmholtzState.mat` is no
+longer written; `h.load` still reads one in an older folder whose json has no block (its B was
+in the nominal coil frame, so it is converted to the currents that made it).
 
 ## Level 4 — the two microwave channels
 
@@ -241,6 +314,7 @@ frequency comes from `calibB1Rabi`, which uses the NVs as the probe.
 | `rabiFitRobust` | `rabiFit`, `ourRabiFit` | the old fit's amplitude start is 2× the truth with the truth as its lower bound, so `a` pins at the bound; the frequency starts from a guess. The new one scans frequency exhaustively — no start point to get wrong. |
 | `esrFitRobust`, the only ESR fitter | `ESRfit`; the retired `esrMultiLineFit`, `esrHyperfineFit`, `esrLineFit` | N Lorentzians on a **shared** baseline with the centre covariance exposed. Splittings are differences of centres, so var = C₁₁ + C₂₂ − 2C₁₂ and the cross term is not optional; `confint`, which the old path uses, does not expose covariance at all. The same call fits the microwave resonator's own dip as a separate component (it moves — seen near 2820 and near 2763 MHz — so it is detected, never looked up), solves the field (\|B\|, tilt from the aligned axis, D) from three or more lines, and tests a single narrow line for the 14N/15N hyperfine. |
 | own extraction | `extract1Ddata`, `extractESRdata` | `extract1Ddata` cuts the ratio across averages at 5, then 3, then **one** standard deviation. A one-sigma cut discards about a third of good Gaussian data, after two harsher passes have shrunk the spread it measures against, and it biases survivors toward the mean — so every error bar downstream is too small. `extractESRdata` is a four-line wrapper around it. |
+| `coilMatrixFit` (via `calibCoilMatrix`) | the θ/φ scan (`calibFieldAlign`) as the way to align; hand-entered diamond orientation (`normal`, `edge`, `D_rotate`, ...); the nominal `magnetic_field_ratio` | Fits B = M·I + b0 in the NV frame to every line of ~20 spectra through the exact Hamiltonian, from starts that need no guess (exhaustive per-spectrum solve, a metric linear in the squared field magnitude, RANSAC over symmetry labels). Aligning is then a setting, and the field limits are exact. |
 
 Both robust fits report R² **next to the ceiling the noise imposes**, `1 − Σe²/Σ(y−ȳ)²`.
 R² = 0.82 against a ceiling of 0.84 is as good as the photons allow; the same 0.82 against
@@ -249,7 +323,9 @@ was wrong: at the ~1.4% contrast this setup gives, the ceiling is around 0.8, so
 threshold rejects sound fits for being quiet.
 
 Every fit has an offline grader that runs in seconds with no hardware: `testFieldPipeline`,
-`testB1RabiChain`, `testMwPairChain`. Run them before the hardware, not after. They live
+`testCoilMatrixFit`, `testHelmholtzLimits`, `testB1RabiChain`, `testMwPairChain` (and
+`testHelmholtzOffline`, which drives the real Helmholtz class and its window on dummy
+supplies — run it in a fresh MATLAB, never beside a live session). Run them before the hardware, not after. They live
 *with* the calibrations rather than in a test folder, because that is what keeps them being
 run.
 

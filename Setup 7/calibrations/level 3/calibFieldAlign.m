@@ -4,16 +4,22 @@ function out = calibFieldAlign(opts)
 %   out = calibFieldAlign
 %   out = calibFieldAlign(struct('rounds', 3, 'thetaSpan', 6, 'phiSpan', 6))
 %
-% LEVEL 3. Alternating 1D scans in the Helmholtz spherical coordinates, with the
+% SUPERSEDED AS A LEVEL 3 STEP (2026-11) by calibCoilMatrix: with the coils calibrated against
+% the NVs, B along an NV axis is a setting (h.alignToNV), not a search. Kept as an
+% INDEPENDENT CHECK of that calibration. Note the angle names: Btheta is now the POLAR angle
+% from +z and Bphi the AZIMUTH (the class used the opposite naming before), so thetaSpan and
+% phiSpan now mean those. The scan itself does not care which is which.
+%
+% Alternating 1D scans in the Helmholtz spherical coordinates, with the
 % optimum of each taken from a parabola fit rather than from the best measured point, and the
 % final answer taken as the INVERSE-VARIANCE MEAN of those vertices rather than the last one
 % -- every round measures the same angle again, so using only the last throws the rest away.
 %
 % ===================================================================
-% WHY A SCAN AND NOT A CALCULATION
+% WHY A SCAN AND NOT A CALCULATION  (history: this is what calibCoilMatrix now solves)
 % ===================================================================
 %
-% Helmholtz.NVcoordinates returns the four NV axis vectors in the coil frame, and with
+% Helmholtz.NVcoordinates returned the four NV axis vectors in the coil frame, and with
 % those plus the measured projections the field direction follows in closed form:
 % sum(a_i a_i') = (4/3)I for the four <111> vectors, so n = (3/4B) * sum(p_i a_i), and one
 % step would land on the axis.
@@ -431,7 +437,7 @@ function out = calibFieldAlign(opts)
             fprintf('\n  To keep this:\n');
             fprintf('    h = getObjByName(''Helmholtz'');\n');
             fprintf('    h.setBtheta(%.4f); h.setBphi(%.4f);\n', cur.theta, cur.phi);
-            fprintf('    h.save([currentPath, ''helmholtzState.mat'']);\n');
+            fprintf('    h.save(setup7Paths().json);\n');
         end
         if opts.nPoints >= 3; plotScans(S, metric, opts.tolDeg); end
         out.ok = true;

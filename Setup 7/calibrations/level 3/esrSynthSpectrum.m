@@ -40,6 +40,8 @@ function out = esrSynthSpectrum(opts)
 %   resCentre  where that dip sits, MHz (default 2820)
 %   resWidth   its Gaussian sigma, MHz (default 90)
 %   seed       RNG seed (default 12345)
+%   Bvec       a field VECTOR [Bx By Bz] in the crystal frame, Gauss. Overrides B, tiltDeg and
+%              tiltAzDeg (default [] = use them)
 %   verbose    print the truth table (default true; testFieldPipeline turns it off)
 %
 % OUTPUT is a struct that calibFieldSurvey accepts as 'replay', plus the truth:
@@ -53,7 +55,7 @@ function out = esrSynthSpectrum(opts)
     opts = withDefaults(opts, struct('B', 45, 'tiltDeg', 7, 'tiltAzDeg', 20, ...
         'D', 2870.5, 'freqs', 2725:1.5:3015, 'fwhm', 8, 'depth', 0.010, ...
         'noise', 0.0009, 'sterrScale', 8, 'resDepth', 0.004, 'resCentre', 2820, ...
-        'resWidth', 90, 'seed', 12345, 'verbose', true));
+        'resWidth', 90, 'seed', 12345, 'verbose', true, 'Bvec', []));
 
     GAMMA = 2.8025;                 % MHz/G
 
@@ -72,6 +74,13 @@ function out = esrSynthSpectrum(opts)
     nHat = cos(th)*a1 + sin(th)*(cos(az)*u + sin(az)*w);
     nHat = nHat/norm(nHat);
     Bvec = opts.B * nHat;
+    if ~isempty(opts.Bvec)
+        % a field VECTOR in the crystal frame overrides B / tilt / azimuth (calibCoilMatrix's
+        % grader needs fields pointing anywhere, not just near one axis)
+        Bvec = opts.Bvec(:);
+        opts.B = norm(Bvec);
+        opts.tiltDeg = acosd(min(max(abs(Ax * Bvec)) / max(opts.B, eps), 1));
+    end
 
     proj = (Ax * Bvec)';            % signed projections, Gauss
 

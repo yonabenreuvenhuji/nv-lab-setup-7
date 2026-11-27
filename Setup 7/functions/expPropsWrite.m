@@ -53,8 +53,12 @@ function res = expPropsWrite(newVals, opts)
 %   2. UNIQUE. If the key appears more than once at the top level the file is already
 %      ambiguous -- MATLAB's jsondecode keeps the LAST one, which is not what reading the
 %      file top to bottom suggests. Refused, and named.
-%   3. NUMERIC ONLY. Scalars and numeric row vectors. Strings, structs and booleans are
-%      refused, because their formatting conventions are not worth guessing at.
+%   3. NUMERIC, OR ONE WHOLE OBJECT. A top-level key gets a numeric scalar or row vector,
+%      or -- for a block such as "Helmholtz" -- a 1x1 struct, written as a whole nested
+%      object (numbers, numeric matrices as arrays of rows, strings, true/false, nested
+%      structs; indented with the file's own indent). A bare string or boolean at the top
+%      level is still refused. An object is replaced as a unit: its key is the thing being
+%      set, and rule 5 compares the decoded object with what was asked for.
 %   4. BACKUP FIRST, and the backup is verified readable before the original is touched.
 %   5. VERIFIED AFTER. The new file is jsondecode'd and compared field by field against
 %      both the intended values AND the original decode. If any field that was not asked
@@ -113,15 +117,36 @@ function res = expPropsWrite(newVals, opts)
     end
 
     % ---- plan, with no writing yet -------------------------------------
-    plan = struct('key', {}, 'val', {}, 'old', {}, 'a', {}, 'b', {}, 'note', {});
+    unit = indentUnit(txt);
+    eol = sprintf('\n');
+    if contains(txt, sprintf('\r\n')); eol = sprintf('\r\n'); end
+    plan = struct('key', {}, 'val', {}, 'old', {}, 'a', {}, 'b', {}, 'note', {}, ...
+                  'text', {}, 'isObj', {});
     for i = 1:numel(keys)
         k = keys{i};
         v = newVals.(k);
-        if ~isnumeric(v) || ~isreal(v) || isempty(v) || ~isvector(v) || any(~isfinite(v))
-            res.skipped{end+1} = {k, 'not a finite real numeric scalar or vector'};
-            continue
+        isObj = isstruct(v) && isscalar(v);
+        if isObj
+            try
+                text = toJson(v, unit, 1, eol);
+                want = decodeValue(text);
+            catch err
+                res.skipped{end+1} = {k, ['could not be written as a json object: ' err.message]};
+                continue
+            end
+            if ~sameValue(want, v)
+                res.skipped{end+1} = {k, ['its json rendering does not read back as the ' ...
+                    'struct given -- a bug in the writer, nothing written']};
+                continue
+            end
+        else
+            if ~isnumeric(v) || ~isreal(v) || isempty(v) || ~isvector(v) || any(~isfinite(v))
+                res.skipped{end+1} = {k, 'not a finite real numeric scalar or vector, nor a 1x1 struct'};
+                continue
+            end
+            v = v(:)';
+            text = numToJson(v);
         end
-        v = v(:)';
         if ~isfield(idx, validKey(k))
             if ~opts.create
                 res.skipped{end+1} = {k, ['not present in the file, and create is false. ' ...
@@ -129,8 +154,8 @@ function res = expPropsWrite(newVals, opts)
                     'class property first, then re-run with struct(''create'', true).']};
                 continue
             end
-            plan(end+1) = struct('key', k, 'val', v, 'old', [], ...
-                                 'a', NaN, 'b', NaN, 'note', 'NEW');           %#ok<AGROW>
+            plan(end+1) = struct('key', k, 'val', v, 'old', [], 'a', NaN, 'b', NaN, ...
+                                 'note', 'NEW', 'text', text, 'isObj', isObj);   %#ok<AGROW>
             continue
         end
         e = idx.(validKey(k));
@@ -141,20 +166,29 @@ function res = expPropsWrite(newVals, opts)
             continue
         end
         old = [];
-        if isfield(J0, validKey(k)) && isnumeric(J0.(validKey(k)))
-            old = J0.(validKey(k));
-            old = old(:)';
+        if isObj
+            if isfield(J0, validKey(k)) && isequaln(J0.(validKey(k)), decodeValue(text))
+                res.unchanged{end+1} = k;
+                res.written.(validKey(k)) = v;
+                continue
+            end
+            if isfield(J0, validKey(k)); old = J0.(validKey(k)); end
+        else
+            if isfield(J0, validKey(k)) && isnumeric(J0.(validKey(k)))
+                old = J0.(validKey(k));
+                old = old(:)';
+            end
+            if ~isempty(old) && numel(old) == numel(v) && all(abs(old - v) < 1e-12)
+                % NOT a skip. The file already says what was asked for, so the request is
+                % satisfied -- counting this as a failure would make res.ok false on the
+                % second run of a cell that worked the first time, which is exactly backwards.
+                res.unchanged{end+1} = k;
+                res.written.(validKey(k)) = v;
+                continue
+            end
         end
-        if ~isempty(old) && numel(old) == numel(v) && all(abs(old - v) < 1e-12)
-            % NOT a skip. The file already says what was asked for, so the request is
-            % satisfied -- counting this as a failure would make res.ok false on the second
-            % run of a cell that worked the first time, which is exactly backwards.
-            res.unchanged{end+1} = k;
-            res.written.(validKey(k)) = v;
-            continue
-        end
-        plan(end+1) = struct('key', k, 'val', v, 'old', old, ...
-                             'a', e.a, 'b', e.b, 'note', '');                  %#ok<AGROW>
+        plan(end+1) = struct('key', k, 'val', v, 'old', old, 'a', e.a, 'b', e.b, ...
+                             'note', '', 'text', text, 'isObj', isObj);         %#ok<AGROW>
     end
 
     % ---- show the plan --------------------------------------------------
@@ -163,12 +197,16 @@ function res = expPropsWrite(newVals, opts)
             fprintf('  nothing to change.\n');
         else
             for i = 1:numel(plan)
-                if isempty(plan(i).old)
-                    fprintf('  %-28s %14s  ->  %s\n', plan(i).key, '(new)', ...
-                            numToJson(plan(i).val));
+                if plan(i).isObj
+                    nf = numel(fieldnames(plan(i).val));
+                    if isempty(plan(i).old); was = '(new)'; else; was = '(object)'; end
+                    fprintf('  %-28s %14s  ->  object with %d fields:\n', plan(i).key, was, nf);
+                    fprintf('      %s\n', strrep(plan(i).text, newline, [newline '      ']));
+                elseif isempty(plan(i).old)
+                    fprintf('  %-28s %14s  ->  %s\n', plan(i).key, '(new)', plan(i).text);
                 else
                     fprintf('  %-28s %14s  ->  %s\n', plan(i).key, ...
-                            numToJson(plan(i).old), numToJson(plan(i).val));
+                            numToJson(plan(i).old), plan(i).text);
                 end
             end
         end
@@ -227,12 +265,12 @@ function res = expPropsWrite(newVals, opts)
         spanned = spanned(ord);
         for i = 1:numel(spanned)
             p = spanned(i);
-            news = [news(1:p.a-1), numToJson(p.val), news(p.b+1:end)];
+            news = [news(1:p.a-1), p.text, news(p.b+1:end)];
         end
     end
     for i = 1:numel(plan)
         if ~hasSpan(i)
-            news = insertKey(news, plan(i).key, numToJson(plan(i).val));
+            news = insertKey(news, plan(i).key, plan(i).text, eol);
         end
     end
 
@@ -265,7 +303,16 @@ function res = expPropsWrite(newVals, opts)
     if opts.verbose
         fprintf('\n  WRITTEN and verified: the file reads back with exactly these changes and\n');
         fprintf('  no others.\n');
-        writeVerdict(res, plan);
+        if any(~[plan.isObj])
+            % the reload / pulse-time advice is about experiment properties; an object
+            % block such as "Helmholtz" is read by its own class, not by loadJsonParams
+            writeVerdict(res, plan);
+        else
+            if ~isempty(res.backup)
+                fprintf('  The previous file is at\n      %s\n', res.backup);
+            end
+            fprintf('============================================================\n\n');
+        end
     end
 end
 
@@ -395,9 +442,10 @@ function b = valueEnd(txt, a)
     while b > a && any(txt(b) == sprintf(' \t\r\n')); b = b - 1; end
 end
 
-function txt = insertKey(txt, key, valStr)
+function txt = insertKey(txt, key, valStr, eol)
 % Add a new top-level key just before the closing brace, matching the indentation of the
-% last entry so the file still looks hand-written.
+% last entry (and the file's line ending) so the file still looks hand-written.
+    if ~exist('eol', 'var'); eol = sprintf('\n'); end
     close = find(txt == '}');
     if isempty(close)
         error('expPropsWrite: no closing brace in the json; refusing to append.');
@@ -418,8 +466,7 @@ function txt = insertKey(txt, key, valStr)
     end
     sep = '';
     if ~isempty(body) && body(end) ~= '{'; sep = ','; end
-    txt = [body, sep, sprintf('\n'), indent, '"', key, '": ', valStr, ...
-           sprintf('\n'), txt(p:end)];
+    txt = [body, sep, eol, indent, '"', key, '": ', valStr, eol, txt(p:end)];
 end
 
 function s = numToJson(v)
@@ -461,6 +508,16 @@ function [good, why] = verifyWrite(f, J0, plan)
             why = sprintf('"%s" is not in the file after the write', plan(i).key); return
         end
         got = J1.(k);
+        if plan(i).isObj
+            % the object must decode to exactly what its own rendering decodes to, and that
+            % to the struct that was asked for (checked again here, after the write)
+            if ~isequaln(got, decodeValue(plan(i).text)) || ~sameValue(got, plan(i).val)
+                why = sprintf('"%s" does not read back as the object that was written', ...
+                              plan(i).key);
+                return
+            end
+            continue
+        end
         if ~isnumeric(got)
             why = sprintf('"%s" did not come back numeric', plan(i).key); return
         end
@@ -519,5 +576,98 @@ function o = withDefaults(o, d, who)
     end
     for i = 1:numel(known)
         if ~isfield(o, known{i}); o.(known{i}) = d.(known{i}); end
+    end
+end
+
+% ======================================================================
+%   whole objects (one top-level block, e.g. "Helmholtz")
+% ======================================================================
+
+function unit = indentUnit(txt)
+% The file's own indent: the leading whitespace of the first indented line. Tabs in the
+% setup 7 files; four spaces if nothing can be told.
+    unit = '    ';
+    t = regexp(txt, '\n([ \t]+)\S', 'tokens', 'once');
+    if ~isempty(t); unit = t{1}; end
+end
+
+function s = toJson(v, unit, level, nl)
+% A value as json text, laid out like the hand-written files: one field per line, the
+% closing brace at the parent's indent, the file's own line ending (nl). Numbers through
+% numToJson (integers stay integers, %.12g otherwise). A numeric matrix is an array of its
+% ROWS, which jsondecode turns back into the same matrix. Refuses what json cannot say
+% (NaN, Inf, struct arrays, cells).
+    if ~exist('nl', 'var'); nl = newline; end
+    if isstruct(v)
+        if ~isscalar(v); error('struct arrays are not supported'); end
+        fn = fieldnames(v);
+        if isempty(fn); s = '{}'; return; end
+        parts = cell(1, numel(fn));
+        for i = 1:numel(fn)
+            parts{i} = [repmat(unit, 1, level + 1), '"', fn{i}, '": ', ...
+                        toJson(v.(fn{i}), unit, level + 1, nl)];
+        end
+        s = ['{', nl, strjoin(parts, [',', nl]), nl, repmat(unit, 1, level), '}'];
+    elseif ischar(v) || isstring(v)
+        s = ['"', escapeStr(char(v)), '"'];
+    elseif islogical(v)
+        if ~isscalar(v); error('logical arrays are not supported'); end
+        if v; s = 'true'; else; s = 'false'; end
+    elseif isnumeric(v)
+        if ~isreal(v) || any(~isfinite(v(:)))
+            error('NaN, Inf and complex numbers cannot be written to json');
+        end
+        if isempty(v); s = '[]'; return; end
+        if ndims(v) > 2; error('arrays of more than 2 dimensions are not supported'); end
+        if isvector(v)
+            s = numToJson(v);
+        else
+            rows = cell(1, size(v, 1));
+            for r = 1:size(v, 1)
+                rows{r} = ['[', strjoin(arrayfun(@(x) numToJson(x), v(r, :), ...
+                           'UniformOutput', false), ', '), ']'];
+            end
+            s = ['[', strjoin(rows, ', '), ']'];
+        end
+    else
+        error('values of class %s are not supported', class(v));
+    end
+end
+
+function s = escapeStr(s)
+    s = strrep(s, '\', '\');
+    s = strrep(s, '"', '\"');
+    s = strrep(s, sprintf('\n'), '\n');
+    s = strrep(s, sprintf('\r'), '\r');
+    s = strrep(s, sprintf('\t'), '\t');
+end
+
+function v = decodeValue(text)
+% What jsondecode makes of one value on its own.
+    w = jsondecode(['{"v": ', text, '}']);
+    v = w.v;
+end
+
+function same = sameValue(a, b)
+% Does the decoded json a hold what the struct b meant? Shape-insensitive for vectors
+% (jsondecode returns [1,2,3] as a column), %.12g-tolerant for numbers.
+    if isstruct(b)
+        same = isstruct(a) && isscalar(a) && isempty(setxor(fieldnames(a), fieldnames(b)));
+        if ~same; return; end
+        fn = fieldnames(b);
+        for i = 1:numel(fn)
+            if ~sameValue(a.(fn{i}), b.(fn{i})); same = false; return; end
+        end
+    elseif ischar(b) || isstring(b)
+        same = ischar(a) && strcmp(a, char(b));
+    elseif islogical(b)
+        same = islogical(a) && isequal(a, b);
+    elseif isnumeric(b)
+        if isempty(b); same = isempty(a); return; end
+        if isvector(b); a = a(:)'; b = b(:)'; end
+        same = isnumeric(a) && isequal(size(a), size(b)) && ...
+               all(abs(double(a(:)) - double(b(:))) <= 1e-10 * max(1, abs(double(b(:)))));
+    else
+        same = false;
     end
 end

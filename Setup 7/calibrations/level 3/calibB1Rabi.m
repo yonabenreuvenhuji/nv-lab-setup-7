@@ -138,6 +138,50 @@ function out = calibB1Rabi(opts)
 %                  hardware and fits what is already measured -- see REPLAY above.
 %   replayFErrFrac assumed fRabiErr/fRabi for a matrix replay (default 0.01)
 %   replayFLineErr assumed fLineErr, MHz, for a matrix replay (default 0.2)
+%   replay         a previous OUTPUT (out) or the path of the .mat a run saved
+%                  (results\<date>\level 3\calibB1Rabi_*.mat): its points, AND the expected
+%                  line-vs-field relation it was measured against. The field is NOT moved
+%                  on a replay unless leaveAtPeak is passed explicitly.
+%                      out = calibB1Rabi(struct('replay', out));
+%   esrMode        'auto' (default) | 'predict' | 'measure'. How each point finds the line
+%                  to drive -- see PREDICT MODE below. 'auto' = predict when a coil
+%                  calibration is loaded, measure otherwise.
+%   anchorRho      predict mode: the fields of the anchor surveys (default: the lowest and
+%                  highest coarse field). [] with esrMode 'predict' = those two.
+%   anchorStep     anchor sweep step, MHz (default 1.5)
+%   anchorMargin   anchor sweep reach beyond the outer pair, MHz (default 35)
+%   predictErrMHz  the uncertainty given to a predicted line (default 0.3)
+%   surveyFn, rabiFn   OFFLINE GRADERS ONLY: @(freqs, opts) -> a calibFieldSurvey-like
+%                  struct, and @(freq, opts) -> a runRabiAt-like struct, in place of the
+%                  hardware (testB1Predict). [] = the real thing.
+%   helmholtz      OFFLINE GRADERS ONLY: the Helmholtz object to drive, in place of
+%                  getObjByName('Helmholtz') -- testB1Predict hands it a second object on
+%                  dummy supplies, so it can run next to the live setup. [] = the live one.
+%   saveRaw       save the whole output, points included, to
+%                  results\<date>\level 3\calibB1Rabi_<stamp>.mat (default true; also on
+%                  an error, with whatever was measured)
+%
+% PREDICT MODE (the default once the coils are calibrated). Every point used to run a CW ESR
+% to find the line before its Rabi -- 22 ESRs a scan, and the lower aligned line sweeps right
+% through the resonator's own dip, so near the peak those fits were pulled by 2-4 MHz (the
+% 2026-11-27 run: rms 1.6 MHz against the prediction, while each spectrum's |B| from ALL its
+% lines agreed with the coil calibration to 0.39 G rms). Now:
+%   ANCHORS  two wide surveys, at the lowest and highest coarse field. Each gives |B| and D
+%            from the whole spectrum -- both aligned lines, the upper one far from the
+%            resonator -- so |B| = a*Brho + b corrects the coil calibration's ~0.3 G.
+%   POINTS   the field is set and the Rabi is driven at the predicted line, no ESR. A
+%            prediction 1 MHz off changes a 15 MHz Rabi frequency by 0.2%.
+%   VERIFY   at the optimum, one real wide ESR, compared with the prediction, so the
+%            frequency written to the json is measured.
+% esrMode 'measure' is the old behaviour, for an uncalibrated coil or a check.
+%
+% THE EXPECTED LINE. With the coils calibrated (calibCoilMatrix), the field is known in
+% the NV frame, so where the tracked line (the aligned orientation's ms=0 -> -1) should sit
+% at each Brho is a calculation: the lowest of the eight lines at Brho along the present
+% direction, exact Hamiltonian, the calibration's D. It is drawn in the second panel next to
+% the measured points and the straight-line fit, and "measured - expected" is printed. If
+% they agree to a fraction of a linewidth, the ESR half of each point is only confirming
+% what the coil calibration already says.
 %
 %   rhoCoarse      coarse field list, G (default: current Brho -7 to +7 in 11 steps --
 %                  +/- 7 G is the narrowest scan that determines Q every time, see the
@@ -244,7 +288,27 @@ function out = calibB1Rabi(opts)
 % calibFieldAlign; only the magnitude moves here.
 
     if ~exist('opts', 'var'); opts = struct(); end
+    % 'replay': a previous output or its saved .mat -> its points, and the expected relation
+    % that run was measured against. A replay never moves the field unless asked to.
+    replayExpected = [];
+    if isfield(opts, 'replay') && ~isempty(opts.replay)
+        r = opts.replay;
+        if ischar(r) || isstring(r)
+            S = load(char(r));
+            if isfield(S, 'b1Out'); r = S.b1Out; else; error('calibB1Rabi: no b1Out in %s', r); end
+        end
+        if ~isstruct(r) || ~isfield(r, 'points')
+            error('calibB1Rabi: replay must be a previous output (with .points) or its saved .mat.');
+        end
+        opts.replayPoints = r.points;
+        if isfield(r, 'expected'); replayExpected = r.expected; end
+        if ~isfield(opts, 'leaveAtPeak'); opts.leaveAtPeak = false; end
+        opts = rmfield(opts, 'replay');
+    end
     opts = withDefaults(opts, struct( ...
+        'saveRaw', true, 'esrMode', 'auto', 'anchorRho', [], 'anchorStep', 1.5, ...
+        'anchorMargin', 35, 'predictErrMHz', 0.3, 'surveyFn', [], 'rabiFn', [], ...
+        'helmholtz', [], ...
         'rhoCoarse', [], 'rhoFine', [], 'rhoFineSpan', 4, 'nFine', 9, 'twoPass', true, ...
         'rabiAmplitude', -16, 'repeats', 300, 'averages', 2, 'tau', [], ...
         'useSequenceWalk', true, 'passesPerRun', [], 'walkWarmupTriggers', 1, ...
@@ -292,9 +356,11 @@ function out = calibB1Rabi(opts)
 
     GAMMA = 2.8025;
     if isempty(opts.tau); opts.tau = round(0.02 : 0.01 : 1.0, 3); end
+    h = opts.helmholtz;
+    opts.helmholtz = [];        % a handle has no business in the saved output
     out = struct('ok', false, 'opts', opts, 'gamma', GAMMA);
 
-    h = getObjByName('Helmholtz');
+    if isempty(h); h = getObjByName('Helmholtz'); end
     if isempty(h)
         try; h = Helmholtz; catch; end
     end
@@ -323,6 +389,35 @@ function out = calibB1Rabi(opts)
         end
     end
     out.rho0 = rho0; out.theta0 = theta0; out.phi0 = phi0;
+    out.expected = expectedRelation(h, replayExpected, opts);
+    if out.expected.ok
+        fprintf('expected tracked line: %s\n', out.expected.source);
+    end
+
+    % ---- how each point finds its line: predicted (anchored) or measured -------------
+    mode = lower(char(opts.esrMode));
+    if ~any(strcmp(mode, {'auto', 'predict', 'measure'}))
+        error('calibB1Rabi: esrMode must be ''auto'', ''predict'' or ''measure''.');
+    end
+    if strcmp(mode, 'auto')
+        if out.expected.ok; mode = 'predict'; else; mode = 'measure'; end
+    end
+    if strcmp(mode, 'predict') && ~out.expected.ok
+        fprintf(['esrMode ''predict'' needs a coil calibration (none loaded, none in the json):\n' ...
+                 'measuring the line at every point instead.\n']);
+        mode = 'measure';
+    end
+    if replaying; mode = 'measure'; end      % a replay measures nothing either way
+    opts.esrModeUsed = mode;
+    out.esrMode = mode;
+    if ~replaying
+        if strcmp(mode, 'predict')
+            fprintf(['ESR mode: PREDICT -- two anchor surveys, then each Rabi at the predicted line\n' ...
+                     '(no ESR per point), and one real ESR at the optimum to verify.\n']);
+        else
+            fprintf('ESR mode: MEASURE -- a CW ESR at every point to find the line.\n');
+        end
+    end
 
     % THE COARSE HALF-WIDTH IS SET BY WHAT THE FIT NEEDS, NOT BY TASTE.
     %
@@ -371,7 +466,21 @@ function out = calibB1Rabi(opts)
         else
         % ================= COARSE PASS =================
         freqsC = esrWindowFor(max(rhosC), opts, GAMMA);
-        checkWindow(freqsC, rhosC, opts, GAMMA);
+        if strcmp(opts.esrModeUsed, 'predict')
+            % ---- the anchors: |B| and D from two whole spectra --------------------
+            aRho = opts.anchorRho;
+            if isempty(aRho); aRho = [min(rhosC) max(rhosC)]; end
+            out.anchor = runAnchors(h, aRho, out.expected, opts, GAMMA);
+            out.expected.anchor = out.anchor;
+            opts.predictFn = @(r) predictedLine(out.anchor, out.expected, r);
+            opts.expectedU = out.expected.u;
+            % the verify ESR is a WIDE one (full field fit), so its window must hold the
+            % outer pair at the largest field with room -- as the anchors' do
+            half = GAMMA*max(rhosC)*1.05 + opts.anchorMargin;
+            freqsC = round(out.anchor.D - half) : opts.anchorStep : round(out.anchor.D + half);
+        else
+            checkWindow(freqsC, rhosC, opts, GAMMA);
+        end
 
         printHeader('COARSE');
         PC = [];
@@ -379,6 +488,7 @@ function out = calibB1Rabi(opts)
             p = measureAt(h, rhosC(i), freqsC, [], 'coarse', opts);
             printRow(p);
             PC = [PC p];                                                    %#ok<AGROW>
+            out.coarse = PC;       % kept as it grows, so an error can save it
         end
         out.coarse = PC;
 
@@ -404,7 +514,9 @@ function out = calibB1Rabi(opts)
                         min(rhosF), max(rhosF), numel(rhosF), rhoMid, howMid);
 
                 freqsF = freqsC; relF = [];
-                if opts.fineNarrowEsr && rel.ok
+                if strcmp(opts.esrModeUsed, 'predict')
+                    % nothing to size: no ESR on the fine pass either
+                elseif opts.fineNarrowEsr && rel.ok
                     % THE WINDOW IS SIZED FROM THE LINEWIDTH WE JUST MEASURED, not from a
                     % constant. A window only a little wider than the line is wrong twice
                     % over: the fitter's baseline has no clean wings to sit on, so it eats
@@ -465,6 +577,7 @@ function out = calibB1Rabi(opts)
                     p = measureAt(h, rhosF(i), freqsF, relF, 'fine', opts);
                     printRow(p);
                     PF = [PF p];                                            %#ok<AGROW>
+                    out.points = [PC PF];  % kept as it grows, so an error can save it
                 end
                 out.fine = PF;
                 P = [PC PF];
@@ -495,6 +608,7 @@ function out = calibB1Rabi(opts)
 
         relAll = lineVsField(G, opts, 'all usable points', GAMMA);
         out.relation = relAll;
+        out.expected = compareExpected(out.expected, G, relAll, medianFwhmOf(G));
 
         % Which frequency to aim at: the Lorentzian centre when it is usable, otherwise the
         % parabola vertex. Both are reported either way so the choice is visible rather
@@ -534,14 +648,15 @@ function out = calibB1Rabi(opts)
             replaySensitivity(P, good, opts, fTarget, rhoStar, relAll);
         end
 
-        if opts.plotIt; drawIt(P, good, fit, relAll, fTarget, rhoStar, opts); end
+        if opts.plotIt; drawIt(P, good, fit, relAll, fTarget, rhoStar, opts, out.expected); end
 
         % ================= FINISH =================
         out.verifyPoint = [];
         if opts.leaveAtPeak && isfinite(rhoStar) && rhoStar > 0
             fprintf('\nsetting Brho = %.3f G\n', rhoStar);
             relV = []; freqsV = freqsC;
-            if opts.fineNarrowEsr && relAll.ok; relV = relAll; freqsV = []; end
+            isPred = strcmp(opts.esrModeUsed, 'predict');
+            if opts.fineNarrowEsr && relAll.ok && ~isPred; relV = relAll; freqsV = []; end
             if replaying; relV = []; freqsV = []; end   % verify is off anyway when replaying
             if opts.verify
                 fprintf('verifying with one ESR + Rabi there...\n');
@@ -549,6 +664,9 @@ function out = calibB1Rabi(opts)
                 printHeader('VERIFY'); printRow(pv);
                 out.verifyPoint = pv;
                 reportVerify(pv, fit, fTarget);
+                if isPred
+                    out.driveFrequency = reportPredictedVerify(pv, opts, rhoStar, out.anchor);
+                end
             else
                 h.setBrho(rhoStar); pause(opts.settle);
             end
@@ -566,13 +684,235 @@ function out = calibB1Rabi(opts)
         out.ok = isfinite(fTarget) && isfinite(rhoStar) && ...
                  (fit.usable || (fit.parabola.ok && fit.parabola.inRange));
         printHandover(out);
+        if ~replaying && opts.saveRaw; out.savedTo = saveOut(out); end
 
     catch err
-        if isfinite(rho0)
+        if isfinite(rho0) && ~replaying
             restoreRho(h, rho0);
             fprintf('\n(field restored to Brho = %.3f G after the error)\n', rho0);
         end
+        % whatever was measured is kept: half an hour of scan is not lost to a fit bug
+        if ~replaying && opts.saveRaw && (isfield(out, 'coarse') || isfield(out, 'points'))
+            if ~isfield(out, 'points') && isfield(out, 'coarse'); out.points = out.coarse; end
+            f = saveOut(out);
+            fprintf(2, 'The points measured so far are in %s -- calibB1Rabi(struct(''replay'', thatFile)).\n', f);
+        end
         rethrow(err);
+    end
+end
+
+function f = saveOut(out)
+% The whole output, points and expected relation included, next to the other level-3 results.
+    f = '';
+    try
+        P = setup7Paths();
+        folder = fullfile(P.folder, 'level 3');
+        if ~isfolder(folder); mkdir(folder); end
+        f = fullfile(folder, ['calibB1Rabi_' datestr(now, 'yyyymmdd_HHMMSS') '.mat']); %#ok<TNOW1,DATST>
+        b1Out = out; %#ok<NASGU>
+        save(f, 'b1Out');
+        fprintf('\nsaved: %s   (replay: calibB1Rabi(struct(''replay'', thatFile)))\n', f);
+    catch err
+        fprintf(2, 'calibB1Rabi: could not save the output (%s).\n', err.message);
+    end
+end
+
+function e = expectedRelation(h, given, opts)
+% Where the tracked line -- the aligned orientation's ms=0 -> -1, i.e. the LOWEST of the
+% eight -- should be at each Brho, from the coil calibration: |B| = Brho along the present
+% direction (setBrho keeps the direction), exact Hamiltonian, the calibration's D.
+% In order of preference: the relation a replayed run was measured against, the Helmholtz
+% object's calibration, the calibration in the json.
+    e = struct('ok', false, 'source', '', 'u', [NaN NaN NaN], 'D', NaN);
+    if ~isempty(given) && isstruct(given) && isfield(given, 'ok') && given.ok
+        e.u = given.u; e.D = given.D; e.ok = true;
+        e.source = given.source;            % already says the direction and D
+        return
+    elseif ~isempty(h) && isprop(h, 'isCalibrated') && h.isCalibrated && h.Brho > 0
+        e.u = h.B / h.Brho; e.D = h.D; e.ok = true;
+        e.source = sprintf('the Helmholtz coil calibration (%s)', h.calibrationSummary());
+    else
+        try
+            J = jsondecode(fileread(opts.jsonLocation));
+            c = J.Helmholtz.calibration;
+            Bj = reshape(J.Helmholtz.B, 1, 3);
+            e.u = Bj / norm(Bj); e.D = c.D; e.ok = true;
+            e.source = sprintf('the coil calibration in %s (%s)', opts.jsonLocation, c.date);
+        catch
+        end
+    end
+    if e.ok
+        [~, t, p] = Helmholtz.cart2sphPhys(e.u);
+        e.source = sprintf('%s; direction theta %.2f, phi %.2f, D %.2f MHz', e.source, t, p, e.D);
+    end
+end
+
+function e = compareExpected(e, G, rel, fwhm)
+% Measured tracked line vs the expected one, at every usable point.
+    if ~e.ok || isempty(G); return; end
+    rho = [G.rho];
+    e.rho = rho;
+    e.fMeasured = [G.fLine];
+    e.fExpected = expectedLine(e, rho);
+    e.resid = e.fMeasured - e.fExpected;
+    e.mean = mean(e.resid);
+    e.rms = sqrt(mean(e.resid.^2));
+    [~, iw] = max(abs(e.resid)); e.worst = e.resid(iw);
+    r2 = [min(rho) max(rho)];
+    e.slopeExpected = diff(expectedLine(e, r2)) / max(diff(r2), eps);
+    e.slopeFit = NaN; if rel.ok; e.slopeFit = rel.a; end
+    e.fwhm = fwhm;
+    if isfield(G, 'predicted') && all([G.predicted])
+        % predict mode: nothing here was measured, so "measured - expected" is only how far
+        % the anchors moved the prediction off the bare coil calibration
+        e.agree = NaN;
+        fprintf('\n=== predict mode: the lines were PREDICTED, not measured ===\n');
+        fprintf('  bare coil calibration: %s\n', e.source);
+        if isfield(e, 'anchor')
+            fprintf(['  the anchors moved the line by %+.2f MHz on average (|B| = %.4f*Brho %+.3f G),\n' ...
+                     '  which is the coil calibration''s error here. The verify ESR checks the result.\n'], ...
+                    e.mean, e.anchor.a, e.anchor.b);
+        end
+        return
+    end
+    fprintf('\n=== the tracked line vs the coil calibration ===\n');
+    fprintf('  expected from %s\n', e.source);
+    fprintf('  measured - expected over %d points: mean %+.2f MHz, rms %.2f, worst %+.2f\n', ...
+            numel(rho), e.mean, e.rms, e.worst);
+    fprintf('  slope: straight-line fit %.4f MHz/G, expected %.4f MHz/G\n', e.slopeFit, e.slopeExpected);
+    if isfinite(fwhm)
+        fprintf('  (the lines are %.1f MHz wide, median FWHM)\n', fwhm);
+    end
+    % ABSOLUTE criteria. A threshold scaled to the linewidth said "agree" for an rms of
+    % 1.6 MHz and a 15% slope mismatch on 20 MHz lines -- it measured how broad the lines
+    % were, not how well the prediction did.
+    e.agree = e.rms <= 0.5 && abs(e.mean) <= 0.5 && ...
+              (~isfinite(e.slopeFit) || abs(e.slopeFit/e.slopeExpected - 1) <= 0.03);
+    if e.agree
+        fprintf(['  -> they agree within 0.5 MHz and 3%% in slope: the ESR at each point is only\n' ...
+                 '     confirming what the coil calibration already predicts.\n']);
+    else
+        fprintf(['  -> they do NOT agree within 0.5 MHz / 3%% in slope. Before blaming the coil\n' ...
+                 '     calibration, check the field each coarse ESR measured on its own (below):\n' ...
+                 '     one line fitted near the resonator''s own dip is pulled by it, while |B|\n' ...
+                 '     from the whole spectrum also uses the upper lines, far from the resonator.\n']);
+        [~, ord] = sort(abs(e.resid), 'descend');
+        for k = ord(1:min(4, numel(ord)))
+            fprintf('       Brho %6.2f G: measured %8.2f, expected %8.2f MHz (%+.2f)\n', ...
+                    rho(k), e.fMeasured(k), e.fExpected(k), e.resid(k));
+        end
+    end
+    % THE INDEPENDENT CHECK: coarse points solved |B| from their whole wide spectrum
+    % (esrFieldSolve) -- both aligned lines and the off-axis group, so D drops out and most of
+    % the lines are nowhere near the resonator. |B| - Brho is the coil calibration's error.
+    if isfield(G, 'B')
+        Bs = [G.B]; k = isfinite(Bs);
+        if any(k)
+            e.BsolveRho = rho(k); e.Bsolve = Bs(k); e.BsolveMinusRho = Bs(k) - rho(k);
+            fprintf('\n  |B| each coarse ESR solved from its whole spectrum, against Brho set:\n');
+            fprintf('     %8s %9s %9s\n', 'Brho/G', '|B|/G', 'diff/G');
+            for j = find(k)
+                fprintf('     %8.2f %9.3f %+9.3f\n', rho(j), Bs(j), Bs(j) - rho(j));
+            end
+            fprintf(['     mean %+.3f G, rms %.3f G. Within ~0.3 G everywhere = the coil calibration\n' ...
+                     '     is right, and the line scatter above is the ESR fit, not the coils.\n'], ...
+                    mean(e.BsolveMinusRho), sqrt(mean(e.BsolveMinusRho.^2)));
+        end
+    end
+end
+
+function A = runAnchors(h, rhos, e, opts, GAMMA)
+% Predict mode's measurement: a wide survey at each anchor field, |B| and D from the whole
+% spectrum, and the straight line |B| = a*Brho + b through them.
+    pts = struct('rho', {}, 'ok', {}, 'B', {}, 'D', {}, 'tiltDeg', {}, 'lines', {}, 'why', {});
+    fprintf('\n--- anchors: |B| and D from the whole spectrum ---\n');
+    for r = rhos(:)'
+        a = struct('rho', r, 'ok', false, 'B', NaN, 'D', NaN, 'tiltDeg', NaN, 'lines', [], 'why', '');
+        h.setBrho(r);
+        pause(opts.settle);
+        half = GAMMA*r*1.05 + opts.anchorMargin;
+        freqs = round(e.D - half) : opts.anchorStep : round(e.D + half);    %#ok<NASGU> used in evalc
+        sv = []; txt = '';
+        try
+            if ~isempty(opts.surveyFn)          % offline graders: a fake survey
+                sv = opts.surveyFn(freqs, opts);
+            else
+                txt = evalc(['sv = calibFieldSurvey(struct(''freqs'', freqs, ''amplitude'', ' ...
+                         'opts.esrAmplitude, ''repeats'', opts.esrRepeats, ''averages'', ' ...
+                         'opts.esrAverages, ''detectionMHz'', opts.esrDetectionMHz, ' ...
+                         '''isTracking'', opts.isTracking, ''freshExperiment'', ' ...
+                         'opts.freshExperiment, ''baselineOrder'', opts.baselineOrder, ''jsonLocation'', ' ...
+                         'opts.jsonLocation, ''plotIt'', false, ''verboseRefine'', false, ' ...
+                         '''D0'', opts.D0, ''newOrderEveryAverage'', opts.esrNewOrderEveryAverage));']);
+            end
+        catch err
+            a.why = ['survey failed: ' err.message];
+        end
+        if isempty(a.why)
+            if isstruct(sv) && isfield(sv, 'solve') && isstruct(sv.solve) && isfield(sv.solve, 'ok') ...
+                    && sv.solve.ok && (~isfield(sv.solve, 'outerVisible') || sv.solve.outerVisible)
+                a.ok = true; a.B = sv.solve.B; a.D = sv.solve.D; a.tiltDeg = sv.solve.tiltDeg;
+                if isfield(sv, 'fit') && isfield(sv.fit, 'lines'); a.lines = [sv.fit.lines.centre]; end
+            else
+                a.why = 'no field solution with the outer pair in the sweep';
+                printIndented(txt);
+            end
+        end
+        if a.ok
+            fprintf('  Brho %6.2f G: |B| %.3f G (%+.3f), D %.2f MHz, tilt %.2f deg\n', ...
+                    r, a.B, a.B - r, a.D, a.tiltDeg);
+        else
+            fprintf('  Brho %6.2f G: NOT USABLE -- %s\n', r, a.why);
+        end
+        pts(end+1) = a;                                                         %#ok<AGROW>
+    end
+    good = [pts.ok];
+    A = struct('points', pts, 'a', 1, 'b', 0, 'D', e.D, 'n', nnz(good));
+    if nnz(good) >= 2
+        c = polyfit([pts(good).rho], [pts(good).B], 1);
+        A.a = c(1); A.b = c(2);
+    elseif nnz(good) == 1
+        A.a = pts(good).B / pts(good).rho;
+    else
+        fprintf(['  no anchor usable: predicting from the coil calibration alone (it was right to\n' ...
+                 '  ~0.4 G rms on 2026-11-27). The verify ESR at the end still measures.\n']);
+    end
+    if any(good); A.D = mean([pts(good).D]); end
+    fprintf('  -> |B| = %.4f * Brho %+.3f G  (%d anchors), D = %.2f MHz\n', A.a, A.b, A.n, A.D);
+end
+
+function f = predictedLine(A, e, rho)
+% The tracked line at Brho: the anchored |B| along the calibrated direction, anchors' D.
+    f = min(Helmholtz.nvLines((A.a*rho + A.b) * e.u, A.D));
+end
+
+function f = reportPredictedVerify(pv, opts, rhoStar, A)
+% The one real ESR of a predict-mode scan, against the prediction. Returns the frequency to
+% drive at: the line implied by the verify spectrum's own |B| and D.
+    fPred = opts.predictFn(rhoStar);
+    fprintf('\n--- predict mode: the verify ESR against the prediction ---\n');
+    if ~isfinite(pv.B) || ~isfinite(pv.D)
+        fprintf(['  the verify ESR gave no whole-spectrum field (%s). Drive frequency = the\n' ...
+                 '  prediction, %.2f MHz.\n'], pv.why, fPred);
+        f = fPred;
+        return
+    end
+    fprintf('  |B| from the whole spectrum %.3f G, anchored prediction %.3f G (%+.3f)\n', ...
+            pv.B, A.a*rhoStar + A.b, pv.B - (A.a*rhoStar + A.b));
+    fprintf('  tracked line: predicted %.2f MHz, from |B| and D of the spectrum %.2f (%+.2f)\n', ...
+            fPred, pv.fLine, pv.fLine - fPred);
+    if isfinite(pv.fLineFit)
+        fprintf('                single-line fit %.2f (%+.2f -- the resonator pulls this one)\n', ...
+                pv.fLineFit, pv.fLineFit - fPred);
+    end
+    f = pv.fLine;
+    fprintf('  -> drive at %.2f MHz (out.driveFrequency); level3.m 3.5 writes this one.\n', f);
+end
+
+function f = expectedLine(e, rho)
+    f = zeros(size(rho));
+    for k = 1:numel(rho)
+        f(k) = min(Helmholtz.nvLines(rho(k) * e.u, e.D));
     end
 end
 
@@ -767,7 +1107,8 @@ function p = measureAt(h, rho, freqs, rel, tag, opts)
                'fRabi', NaN, 'fRabiErr', NaN, 'contrast', NaN, 'r2', NaN, ...
                'r2Ceiling', NaN, 'r2Deficit', NaN, ...
                'chi2', NaN, 'residAutocorr', NaN, 'piNs', NaN, 'piErrNs', NaN, ...
-               'rabiSeconds', NaN, 'shapeWarn', false, 'skippedMHz', NaN);
+               'rabiSeconds', NaN, 'shapeWarn', false, 'skippedMHz', NaN, ...
+               'D', NaN, 'fLineFit', NaN, 'predicted', false);
 
     % windowLo/windowHi/neighbourGap ARE SEEDED HERE, and that is the whole point of these
     % three lines. They are only assigned in the narrow branch below, i.e. only on the fine
@@ -780,6 +1121,25 @@ function p = measureAt(h, rho, freqs, rel, tag, opts)
 
     h.setBrho(rho);
     pause(opts.settle);
+
+    % ---- PREDICT MODE: no ESR, the Rabi goes straight to the predicted line ----------
+    % (the verify point at the optimum still measures -- see below)
+    if isfield(opts, 'esrModeUsed') && strcmp(opts.esrModeUsed, 'predict') && ~strcmp(tag, 'verify')
+        p.fLine = opts.predictFn(rho);
+        p.fLineErr = opts.predictErrMHz;
+        p.fPred = p.fLine;
+        p.aligned = true;
+        p.predicted = true;
+        r = runRabiAt(p.fLine, opts);
+        p.fRabi = r.f; p.fRabiErr = r.fErr; p.contrast = r.contrast;
+        p.r2 = r.r2; p.chi2 = r.chi2; p.residAutocorr = r.residAutocorr;
+        p.r2Ceiling = r.r2Ceiling; p.r2Deficit = r.r2Deficit;
+        p.piNs = r.piNs; p.piErrNs = r.piErrNs; p.rabiSeconds = r.seconds;
+        p.shapeWarn = r.shapeWarn;
+        if ~r.ok; p.why = r.why; return; end
+        p.good = true;
+        return
+    end
 
     % ---- the ESR window --------------------------------------------------
     narrow = isempty(freqs);
@@ -801,13 +1161,17 @@ function p = measureAt(h, rho, freqs, rel, tag, opts)
                                 % it will happily absorb the line itself
     sv = []; txt = '';
     try
-        txt = evalc(['sv = calibFieldSurvey(struct(''freqs'', freqs, ''amplitude'', ' ...
-                     'opts.esrAmplitude, ''repeats'', opts.esrRepeats, ''averages'', ' ...
-                     'opts.esrAverages, ''detectionMHz'', opts.esrDetectionMHz, ' ...
-                     '''isTracking'', opts.isTracking, ''freshExperiment'', ' ...
-                     'opts.freshExperiment, ''baselineOrder'', bo, ''jsonLocation'', ' ...
-                     'opts.jsonLocation, ''plotIt'', false, ''verboseRefine'', false, ' ...
-                     '''D0'', opts.D0, ''newOrderEveryAverage'', opts.esrNewOrderEveryAverage));']);
+        if ~isempty(opts.surveyFn)          % offline graders: a fake survey
+            sv = opts.surveyFn(freqs, opts);
+        else
+            txt = evalc(['sv = calibFieldSurvey(struct(''freqs'', freqs, ''amplitude'', ' ...
+                         'opts.esrAmplitude, ''repeats'', opts.esrRepeats, ''averages'', ' ...
+                         'opts.esrAverages, ''detectionMHz'', opts.esrDetectionMHz, ' ...
+                         '''isTracking'', opts.isTracking, ''freshExperiment'', ' ...
+                         'opts.freshExperiment, ''baselineOrder'', bo, ''jsonLocation'', ' ...
+                         'opts.jsonLocation, ''plotIt'', false, ''verboseRefine'', false, ' ...
+                         '''D0'', opts.D0, ''newOrderEveryAverage'', opts.esrNewOrderEveryAverage));']);
+        end
     catch err
         p.why = ['ESR failed: ' err.message];
         printIndented(txt);
@@ -885,6 +1249,7 @@ function p = measureAt(h, rho, freqs, rel, tag, opts)
             return
         end
         p.B = sv.solve.B; p.tiltDeg = sv.solve.tiltDeg;
+        if isfield(sv.solve, 'D'); p.D = sv.solve.D; end
         mc = [sv.solve.matched.centre]; ma = [sv.solve.matched.axis];
         [dd, j] = min(abs(mc - p.fLine));
         p.aligned = dd < 1e-6 && ma(j) == sv.solve.alignedAxisIdx;
@@ -896,6 +1261,16 @@ function p = measureAt(h, rho, freqs, rel, tag, opts)
             p.why = 'the aligned pair is not fully inside the sweep';
             return
         end
+    end
+
+    % ---- predict mode's verify point: the line from the WHOLE spectrum ---------------
+    % At the optimum the line sits on the resonator, which is exactly where a single-line
+    % fit is pulled (2-4 MHz on 2026-11-27). |B| and D from all the lines are not, so the
+    % line they imply is the one to drive and to report; the single-line fit is kept beside it.
+    if isfield(opts, 'esrModeUsed') && strcmp(opts.esrModeUsed, 'predict') && ...
+            strcmp(tag, 'verify') && isfinite(p.B) && isfinite(p.D) && isfield(opts, 'expectedU')
+        p.fLineFit = p.fLine;
+        p.fLine = min(Helmholtz.nvLines(p.B * opts.expectedU, p.D));
     end
 
     % ---- the Rabi, at the frequency just measured ------------------------
@@ -946,6 +1321,10 @@ end
 
 function r = runRabiAt(freq, opts)
 % One Rabi at one frequency, with the walk standard, fitted and gated.
+    if ~isempty(opts.rabiFn)                 % offline graders: a fake Rabi
+        r = opts.rabiFn(freq, opts);
+        return
+    end
     r = struct('ok', false, 'why', '', 'f', NaN, 'fErr', NaN, 'contrast', NaN, ...
                'r2', NaN, 'r2Ceiling', NaN, 'r2Deficit', NaN, ...
                'chi2', NaN, 'residAutocorr', NaN, 'piNs', NaN, ...
@@ -1236,10 +1615,17 @@ function printHandover(out)
                  '  B1. Nothing downstream should use these numbers yet.\n']);
         return
     end
-    fprintf(['  frequency  %.2f MHz   drive here. level3.m cell 3.5 writes it into\n' ...
-             '                          expProperties.json (key "frequency") with expPropsWrite.\n'], ...
-            out.resonantFrequency);
-    fprintf(['  Brho       %.3f G       cell 3.4c sets it and saves it to helmholtzState.mat\n' ...
+    if isfield(out, 'driveFrequency') && isfinite(out.driveFrequency)
+        fprintf(['  frequency  %.2f MHz   drive here: the line the verify ESR''s whole spectrum puts\n' ...
+                 '                          at the chosen field (resonator centre %.2f). level3.m\n' ...
+                 '                          cell 3.5 writes it into expProperties.json ("frequency").\n'], ...
+                out.driveFrequency, out.resonantFrequency);
+    else
+        fprintf(['  frequency  %.2f MHz   drive here. level3.m cell 3.5 writes it into\n' ...
+                 '                          expProperties.json (key "frequency") with expPropsWrite.\n'], ...
+                out.resonantFrequency);
+    end
+    fprintf(['  Brho       %.3f G       cell 3.4c sets it and saves it to expProperties.json\n' ...
              '                          (a coil setting, not a json field).\n'], out.rhoOptimum);
     if isfield(out, 'piNsAtOptimum') && isfinite(out.piNsAtOptimum)
         fprintf('  pi pulse about %.1f ns\n', out.piNsAtOptimum);
@@ -1257,15 +1643,17 @@ end
 % PLOT
 % ======================================================================
 
-function drawIt(P, good, fit, rel, fTarget, rhoStar, opts)
-% Three axes, because there are three different quantities: the antenna response against
-% frequency (the measurement), the line position against field (the conversion), and the
-% residuals of that conversion (the only place a wrong-orientation point is visible).
+function drawIt(P, good, fit, rel, fTarget, rhoStar, opts, expd)
+% Two axes: the antenna response against frequency (the measurement), and the line position
+% against field (the conversion) -- measured, fitted with a straight line, and EXPECTED from
+% the coil calibration. They are NOT stacked on shared y scales -- that would imply a
+% relationship between the axes that does not exist.
 %
-% They are NOT stacked on shared y scales -- that would imply a relationship between the
-% axes that does not exist.
+% (A third panel, the residuals of the straight line, was dropped 2026-11: with the expected
+% line drawn, a point on the wrong orientation shows directly as one far off the purple
+% curve, and the residual panel was not being read. reduced chi2 is still printed.)
 %
-% What was added over the two-panel version, and why each one earns its space:
+% What earns each element its space:
 %
 %   THE FWHM, DRAWN. Q was in the title as a number. The resonator's width is the thing you
 %   are actually measuring, and a half-maximum line with the FWHM shaded says in one glance
@@ -1277,15 +1665,13 @@ function drawIt(P, good, fit, rel, fTarget, rhoStar, opts)
 %   star. They are the two outputs of the whole calibration and they now carry their values
 %   on the axes.
 %
-%   THE RESIDUAL PANEL. TEST D in testB1RabiChain makes the point directly: one point that
-%   tracked a different NV orientation bends the coil line without breaking the slope test,
-%   and reduced chi2 is what catches it (0.6 clean, 2745 with the rogue point). chi2 was
-%   printed but the residuals were not plotted, so there was no way to see WHICH point. Now
-%   there is.
+%   THE EXPECTED LINE. Where the coil calibration says the tracked line should be. If the
+%   measured points sit on it to a fraction of a linewidth, the per-point ESR is redundant.
     C = struct('surface', [252 252 251]/255, 'ink', [11 11 11]/255, ...
                'ink2', [82 81 78]/255, 'data', [42 120 214]/255, ...
                'fit', [235 104 52]/255, 'drop', [140 138 133]/255, ...
-               'band', [246 224 210]/255, 'ok', [0 115 89]/255);
+               'band', [246 224 210]/255, 'ok', [0 115 89]/255, ...
+               'expd', [122 61 148]/255);
 
     G = P(good); B = P(~good);
     f = [G.fLine]; w = [G.fRabi]; we = [G.fRabiErr];
@@ -1296,7 +1682,7 @@ function drawIt(P, good, fit, rel, fTarget, rhoStar, opts)
     % =================================================================
     % 1. the antenna response
     % =================================================================
-    ax1 = subplot(3, 1, 1); hold(ax1, 'on');
+    ax1 = subplot(2, 1, 1); hold(ax1, 'on');
 
     usable = isstruct(fit) && isfield(fit, 'usable') && fit.usable;
     fwhm = NaN;
@@ -1364,7 +1750,7 @@ function drawIt(P, good, fit, rel, fTarget, rhoStar, opts)
     % =================================================================
     % 2. the coil conversion
     % =================================================================
-    ax2 = subplot(3, 1, 2); hold(ax2, 'on');
+    ax2 = subplot(2, 1, 2); hold(ax2, 'on');
     hE2 = errorbar(ax2, [G.rho], [G.fLine], [G.fLineErr]);
     set(hE2, 'LineStyle', 'none', 'Color', C.data, 'LineWidth', 0.75);
     try; set(hE2, 'CapSize', 4); catch; end
@@ -1385,6 +1771,13 @@ function drawIt(P, good, fit, rel, fTarget, rhoStar, opts)
         rr = linspace(min([P.rho]), max([P.rho]), 100);
         hL2 = plot(ax2, rr, rel.a*rr + rel.b, '-', 'LineWidth', 2, 'Color', C.fit);
     end
+    % THE EXPECTED LINE, from the coil calibration: what the ESR at each point should find if
+    % the calibration is right. Purple dashed, so it reads as a prediction, not a fit.
+    hX2 = [];
+    if isstruct(expd) && isfield(expd, 'ok') && expd.ok
+        rr = linspace(min([P.rho]), max([P.rho]), 60);
+        hX2 = plot(ax2, rr, expectedLine(expd, rr), '--', 'LineWidth', 1.8, 'Color', C.expd);
+    end
     hS2 = [];
     if isfinite(rhoStar) && isfinite(fTarget)
         yl2 = ylim(ax2);
@@ -1398,66 +1791,44 @@ function drawIt(P, good, fit, rel, fTarget, rhoStar, opts)
              'VerticalAlignment', 'top', 'BackgroundColor', C.surface);
         ylim(ax2, yl2);
     end
+    % predict mode: the anchors are the measurements -- the line their whole spectrum implies
+    hA2 = [];
+    isPred = isfield(G, 'predicted') && all([G.predicted]);
+    if isstruct(expd) && isfield(expd, 'anchor') && isfield(expd.anchor, 'points')
+        ap = expd.anchor.points([expd.anchor.points.ok]);
+        if ~isempty(ap)
+            fa = arrayfun(@(q) min(Helmholtz.nvLines(q.B * expd.u, q.D)), ap);
+            hA2 = plot(ax2, [ap.rho], fa, 's', 'MarkerSize', 9, 'LineWidth', 1.5, ...
+                       'Color', C.ok, 'MarkerFaceColor', C.surface);
+        end
+    end
     styleAxes(ax2, C);
     xlabel(ax2, 'B_\rho requested  (G)', 'Color', C.ink2);
     ylabel(ax2, 'NV line frequency  (MHz)', 'Color', C.ink2);
-    legendOf(ax2, {hD2, hL2, hS2, hB2}, ...
-             {sprintf('used (%d)', numel(G)), 'straight-line fit', 'optimum', ...
-              sprintf('rejected (%d)', nDrop)}, 'northeast');
+    usedLabel = sprintf('used (%d)', numel(G));
+    if isPred; usedLabel = sprintf('predicted, driven (%d)', numel(G)); end
+    legendOf(ax2, {hD2, hL2, hX2, hA2, hS2, hB2}, ...
+             {usedLabel, 'straight-line fit', 'expected (coil calibration)', ...
+              'anchor ESR (whole spectrum)', 'optimum', sprintf('rejected (%d)', nDrop)}, ...
+             'northeast');
     if rel.ok
-        title(ax2, sprintf(['f = %.3f B_\\rho %+.2f MHz     optimum B_\\rho = %.3f G     ' ...
-                            'slope %s'], rel.a, rel.b, rhoStar, ...
-                     ternary(rel.slopeSane, 'sane', 'SUSPECT')), ...
-              'Color', C.ink, 'FontWeight', 'bold');
+        t2 = sprintf(['f = %.3f B_\\rho %+.2f MHz     optimum B_\\rho = %.3f G     ' ...
+                      'slope %s'], rel.a, rel.b, rhoStar, ternary(rel.slopeSane, 'sane', 'SUSPECT'));
     else
-        title(ax2, 'coil relation NOT fitted -- see the report', 'Color', C.ink, ...
-              'FontWeight', 'bold');
+        t2 = 'coil relation NOT fitted -- see the report';
     end
-
-    % =================================================================
-    % 3. residuals of the coil line -- where a rogue orientation shows
-    % =================================================================
-    ax3 = subplot(3, 1, 3); hold(ax3, 'on');
-    haveRes = rel.ok && isfield(rel, 'resid') && isfield(rel, 'rho') && ...
-              numel(rel.resid) == numel(rel.rho) && ~isempty(rel.resid);
-    if haveRes
-        rx = rel.rho(:)'; rr2 = rel.resid(:)';
-        yl3 = max(abs(rr2))*1.35; if ~(yl3 > 0); yl3 = 1; end
-        patch(ax3, [min(rx) max(rx) max(rx) min(rx)], ...
-              rel.rms*[-1 -1 1 1], C.band, 'EdgeColor', 'none', 'HandleVisibility', 'off');
-        plot(ax3, [min(rx) max(rx)], [0 0], '-', 'Color', C.ink2, 'LineWidth', 0.75, ...
-             'HandleVisibility', 'off');
-        hR = plot(ax3, rx, rr2, 'o-', 'MarkerSize', 5, 'LineWidth', 1, 'Color', C.data, ...
-                  'MarkerFaceColor', C.surface);
-        % Name the worst point: with a rogue orientation it is the one to re-measure.
-        [mx, im] = max(abs(rr2));
-        if mx > 3*rel.rms
-            plot(ax3, rx(im), rr2(im), 'o', 'MarkerSize', 11, 'LineWidth', 1.4, ...
-                 'Color', C.fit, 'HandleVisibility', 'off');
-            text(ax3, rx(im), rr2(im), sprintf('  %.2f G: %+.1f MHz  ', rx(im), rr2(im)), ...
-                 'Color', C.fit, 'FontWeight', 'bold', 'FontSize', 8, ...
-                 'VerticalAlignment', 'bottom', 'BackgroundColor', C.surface);
-        end
-        ylim(ax3, yl3*[-1 1]);
-        legendOf(ax3, {hR}, {'residual'}, 'northeast');
-        verdict = 'consistent with one orientation';
-        if rel.chi2Reduced > 10
-            verdict = 'chi2 >> 1: a point is on a DIFFERENT orientation, or the errors are too small';
-        elseif rel.chi2Reduced > 3
-            verdict = 'chi2 high: check the marked point';
-        end
-        title(ax3, sprintf('residuals: rms %.2f MHz, reduced \\chi^2 %.1f  --  %s', ...
-                           rel.rms, rel.chi2Reduced, verdict), ...
-              'Color', C.ink, 'FontWeight', 'bold');
-    else
-        title(ax3, 'no residuals to show (the coil line was not fitted)', ...
-              'Color', C.ink, 'FontWeight', 'bold');
+    if isPred && isfield(expd, 'anchor')
+        t2 = {t2, sprintf(['lines PREDICTED (no ESR per point), anchored by %d wide ESRs: ' ...
+                           '|B| = %.4f B_\\rho %+.3f G'], expd.anchor.n, expd.anchor.a, ...
+                          expd.anchor.b)};
+    elseif isstruct(expd) && isfield(expd, 'rms')
+        t2 = {t2, sprintf(['measured - expected: mean %+.2f MHz, rms %.2f MHz, worst %+.2f ' ...
+                           '(slope %.3f fitted vs %.3f expected)'], expd.mean, expd.rms, ...
+                          expd.worst, expd.slopeFit, expd.slopeExpected)};
     end
-    styleAxes(ax3, C);
-    xlabel(ax3, 'B_\rho requested  (G)', 'Color', C.ink2);
-    ylabel(ax3, 'f - fit  (MHz)', 'Color', C.ink2);
+    title(ax2, t2, 'Color', C.ink, 'FontWeight', 'bold');
 
-    try; set(fig, 'Position', [200 80 820 860]); catch; end
+    try; set(fig, 'Position', [200 80 820 660]); catch; end
 end
 
 function v = ternary(c, a, b)

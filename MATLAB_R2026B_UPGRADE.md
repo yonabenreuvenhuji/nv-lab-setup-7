@@ -109,7 +109,6 @@ New files:
    | Curve Fitting | `fit()` in `ESRfit`, `rabiFit`, `calibLaserSaturation` |
    | Signal Processing | `findpeaks` in `rabiFit` |
    | Mapping | `extractfield` in `PathHelper`, which builds the GUI's experiment list at startup |
-   | Phased Array System | `rotx`/`roty`/`rotz` in `Helmholtz` |
    | Image Processing | `getrect` in `ImageScanResult` (selecting a scan region) |
 
 2. **Add-ons and drivers:**

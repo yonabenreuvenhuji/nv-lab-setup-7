@@ -5,7 +5,6 @@ classdef ViewGeneralControl < GuiComponent & EventListener
     end
     
     properties
-        btnBtoNV        % button
         cbxOutputOn     % checkbox
         cbxFlipDir      % checkbox
         
@@ -65,28 +64,22 @@ classdef ViewGeneralControl < GuiComponent & EventListener
             vboxSpace = uix.VBox('Parent',hboxMain, 'Spacing', 6);
             
             %%% right side %%%
+            % (the "B -> NV" button that was here is gone: the "Align B" panel does that and
+            % more -- any NV axis or cube axis, at a |B| or dip position you choose)
             vboxRight = uix.VBox('Parent',hboxMain, 'Spacing', 6);
-            obj.btnBtoNV = uicontrol(obj.PROP_BUTTON_BIG_RED{:}, ...
-                    'Parent', vboxRight, ...
-                    'String', sprintf('B %s NV', StringHelper.RIGHT_ARROW), ...
-                    'TooltipString', 'Set magnetic field direction to the closest NV axis');
-            BtoNVbottonH = 60;
+            uix.Empty('Parent', vboxRight);
             obj.cbxFlipDir = uicontrol(obj.PROP_CHECKBOX{:}, 'Parent', vboxRight, 'String', 'Flip Direction', 'FontSize', 10, 'FontWeight', 'bold');
             checkBoxH = 35;
-            Heights = [BtoNVbottonH, checkBoxH];
-            vboxRight.Heights = Heights;
-            vboxRightHeightTotal = sum(Heights) + 30;
+            vboxRight.Heights = [-1, checkBoxH];
             rightSidewidth = 120;
-            
+
             %%%% Set mainHbox widths %%%%
             widthsRelative = [leftSideTotalWidth, vboxCenterWidth, -1, rightSidewidth];
             hboxMain.Widths = widthsRelative;
-                
-                
-            obj.btnBtoNV.Callback = @(h,e) obj.btnBtoNVCallback();
+
             obj.cbxFlipDir.Callback = @(h,e) obj.cbxFlipDirCallback();
-            
-            obj.height = vboxRightHeightTotal;
+
+            obj.height = vboxLeftHeightTotal;
             
             obj.refresh;
         end
@@ -114,10 +107,6 @@ classdef ViewGeneralControl < GuiComponent & EventListener
             action = event.NewValue.Tag;
             index = find(strcmp(action, obj.CONTROL_STATE));
             obj.helm.control(obj.helm.CONTROL_STATE{index});
-        end
-        
-        function btnBtoNVCallback(obj)
-            obj.helm.BtoNV;
         end
         
         function cbxFlipDirCallback(obj)

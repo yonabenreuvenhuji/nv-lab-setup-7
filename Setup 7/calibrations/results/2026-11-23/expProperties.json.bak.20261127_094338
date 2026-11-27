@@ -1,0 +1,50 @@
+{
+	"isTracking": 0,
+	"nChannels": 2,
+	"MWChannel": [
+		"MW",
+		"MW2"
+	],
+	"GIMeas": 0,
+	"AWGorSRSswitch": 0,
+	"frequency": 2763.25790231,
+	"channelPhase": [0, 31.4198831474],
+	"timeDelay": 0,
+	"amplitude": -16,
+	"amplitudeDiff": [0, 1.27440678989],
+	"signalRatio": -16.2,
+	"rabiFreq1": 6,
+	"halfPiTime": 0.0193,
+	"piTime": 0.036,
+	"threeHalvesPiTime": 0.0528,
+	"laserInitializationDuration": 46,
+	"checkGlitchInData": true,
+	"lastDelay": 0.050,
+	"referenceDetectionDuration": 3.15,
+	"detectionDuration": 3.15,
+	"tauPol": 12.76,
+	"Helmholtz": {
+		"I": [3.4581126499, 2.91467297974, 1.66939442373],
+		"B": [22.050962457, 22.050962457, 22.050962457],
+		"frame": "NV crystal frame",
+		"Brho": 38.1933873313,
+		"Btheta": 54.7356103172,
+		"Bphi": 45,
+		"flip": false,
+		"stepSize": 1,
+		"stepSizeI": 0.1,
+		"calibration": {
+			"date": "2026-11-27 00:28",
+			"frame": "NV",
+			"matrix": [[5.67114921107, 0.864149152057, 0.189075206737], [-0.548968027536, 8.22973709455, -0.251660110204], [-0.178657582185, 0.276226358046, 13.7231890132]],
+			"offset": [-0.394863649094, 0.38248338215, -1.04574421456],
+			"matrixErr": [[0.0280885501183, 0.0343487168381, 0.0719970423956], [0.0285769748174, 0.0355098700288, 0.0738742537271], [0.0282927542861, 0.0356183066415, 0.0746257697398]],
+			"offsetErr": [0.19762695679, 0.205529293397, 0.20563137841],
+			"D": 2870.08014498,
+			"rmsMHz": 0.8456242725,
+			"nSpectra": 19,
+			"currentMin": [0.6459375, 0.280329218107, 0.29952],
+			"currentMax": [4.8140625, 4.52913580247, 2.07792]
+		}
+	}
+}
