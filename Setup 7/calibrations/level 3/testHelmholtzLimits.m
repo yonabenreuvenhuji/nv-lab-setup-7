@@ -62,6 +62,33 @@ function out = testHelmholtzLimits(opts)
     fprintf('30 G along [111]: outer splitting 2*gamma*30 (to 2nd order)        %s\n', okStr(ok));
     nFail = nFail + ~ok;
 
+    % ---- the dip <-> |B| relations the Align panel uses ---------------------------
+    d = Helmholtz.dipsAlong([1 1 1], 37.3, 2870.08);
+    ok = abs(d.outer(1) - (2870.08 - Helmholtz.GAMMA*37.3)) < 1e-6 && ...
+         abs(d.outer(2) - (2870.08 + Helmholtz.GAMMA*37.3)) < 1e-6;
+    fprintf('along an NV axis the outer pair is D -+ gamma|B| exactly             %s\n', okStr(ok));
+    nFail = nFail + ~ok;
+    d = Helmholtz.dipsAlong([0 0 1], 30, 2870);
+    ok = abs(d.outer(1) - d.inner(1)) < 1e-9 && abs(d.outer(2) - d.inner(2)) < 1e-9;
+    fprintf('along a cube axis all four orientations coincide (inner = outer)      %s\n', okStr(ok));
+    nFail = nFail + ~ok;
+    worstRho = 0;
+    for u = {[1 1 1], [-1 1 1], [0 0 1], [1 0 0]}
+        for rho = [3 12.5 30 57]
+            d = Helmholtz.dipsAlong(u{1}, rho, 2870.08);
+            vals = [d.outer, d.inner];
+            names = {'outerLo', 'outerHi', 'innerLo', 'innerHi'};
+            for k = 1:4
+                r = Helmholtz.rhoForDip(u{1}, 2870.08, names{k}, vals(k));
+                worstRho = max(worstRho, abs(r - rho));
+            end
+        end
+    end
+    ok = worstRho < 1e-6;
+    fprintf('typing any dip gives back |B| (every dip, 4 directions, 3-57 G): %.1e G  %s\n', ...
+            worstRho, okStr(ok));
+    nFail = nFail + ~ok;
+
     % ---- limits vs brute force ----------------------------------------------------
     rs = RandStream('mt19937ar', 'Seed', 11);
     whats = {'Bx', 'By', 'Bz', 'Brho', 'Btheta', 'Bphi'};

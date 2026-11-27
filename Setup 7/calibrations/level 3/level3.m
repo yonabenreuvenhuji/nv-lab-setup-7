@@ -92,8 +92,11 @@ end
 % unipolar, so usually only one or two). k indexes Helmholtz.nvDirections:
 %   1 [+1 +1 +1]   2 [-1 +1 +1]   3 [-1 -1 +1]   4 [+1 -1 +1]   (theta 54.7356, phi 45 135 -135 -45)
 %   5-8 the opposites (theta 125.2644)
-% h.nvTable() lists the same with the reach at the present calibration. The GUI's
-% "Align B with an NV axis" panel does exactly this with a Go button per direction.
+% h.nvTable() lists the same with the reach at the present calibration. In the GUI, the
+% "Align B" panel does this without arithmetic: pick a direction, then type |B| OR where the
+% outer (or inner) dips should land -- the rest follow -- check the dashed preview on the
+% expected-ESR plot, and press Go. Cube axes (+-x, +-y, +-z) put all four orientations
+% equal; from a script: h.setDirection([0 0 1], 25) (closest reachable if just out of reach).
 h = getObjByName('Helmholtz');  h.control('auto');
 h.alignToNV(1, 30);           % 30 G along [+1 +1 +1]: theta 54.7356, phi 45
 h.save(setup7Paths().json);
@@ -133,6 +136,11 @@ tb = testB1RabiChain;
 % is determined; narrower still finds the peak, via the parabola fallback, but returns a
 % biased Q. minR2 is 0 by default and set here only if you want a floor -- R^2 is capped by
 % the signal-to-noise ratio, so 0.9 would reject sound fits for being quiet.
+%
+% The second panel now also draws where the coil calibration EXPECTS the tracked line, and
+% prints "measured - expected". The run is saved to results\<date>\level 3\calibB1Rabi_*.mat;
+% to look at it again without the hardware (the field is not moved):
+%     out = calibB1Rabi(struct('replay', out));      % or the saved .mat path
 h = getObjByName('Helmholtz');  h.control('auto');
 
 out = calibB1Rabi(struct( ...

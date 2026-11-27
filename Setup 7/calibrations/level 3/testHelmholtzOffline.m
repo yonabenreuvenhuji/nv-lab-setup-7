@@ -123,6 +123,42 @@ function out = testHelmholtzOffline(opts)
         fprintf('  [1 1 1] is not reachable with this test calibration; skipped\n');
     end
 
+    % ---- closest reachable, cube axes, preview ------------------------------------
+    T = h.targetTable();
+    ok = numel(T) == 14 && sum(strcmp({T.kind}, 'equal')) == 6;
+    nFail = nFail + report('14 targets: 8 NV axes and 6 cube axes', ok);
+    Bin = h.B;
+    [Bq, Iq, ang, exact] = h.closestReachable(Bin);
+    ok = exact && ang < 1e-6 && norm(Bq - Bin) < 1e-9 && norm(Iq - h.I) < 1e-9;
+    nFail = nFail + report('closestReachable of a reachable field is that field', ok);
+    [Bq, Iq, ang, exact] = h.closestReachable([0 0 -30]);
+    ok = ~exact && ang > 1 && all(Iq >= h.minCurrent - 1e-9 & Iq <= h.maxCurrent + 1e-9) && ...
+         norm(h.fieldFor(Iq) - Bq) < 1e-9;
+    nFail = nFail + report('an unreachable field: in-range currents, the miss reported', ok);
+    % brute force: no grid point in the current box is closer than the solver's answer
+    [a, b, c] = ndgrid(linspace(0, 5.2, 27));
+    Bg = h.fieldFor([a(:) b(:) c(:)]);
+    dg = min(sqrt(sum((Bg - [0 0 -30]).^2, 2)));
+    ok = norm(Bq - [0 0 -30]) <= dg + 1e-9;
+    nFail = nFail + report('...and nothing in the current box is closer (brute force)', ok);
+    kz = find(strcmp({T.kind}, 'equal') & cellfun(@(u) isequal(u, [0 0 1]), {T.u}));
+    rz = 25;
+    if ~isnan(T(kz).rhoMin); rz = min(max(rz, T(kz).rhoMin + 1), T(kz).rhoMax + 8); end
+    h.setDirection([0 0 1], rz, 1);
+    ok = abs(h.Brho - rz) < 0.2 && h.Btheta < 1;
+    nFail = nFail + report(sprintf('setDirection(+z, %.1f G): within 1 deg of z (%.3f)', rz, h.Btheta), ok);
+    h.setPreview([1 2 3]);
+    ok = isequal(h.previewB, [1 2 3]);
+    h.setPreview([]);
+    ok = ok && isempty(h.previewB);
+    nFail = nFail + report('setPreview sets and clears', ok);
+    if opts.gui
+        xl = h.plotExpectedESR([]);
+        ok = numel(xl) == 2 && xl(1) < h.D && xl(2) > h.D;
+        close(gcf);
+        nFail = nFail + report('plotExpectedESR draws on a fresh figure', ok);
+    end
+
     % ---- limits and refusal --------------------------------------------------------
     allOk = true;
     for w = {'Bx', 'By', 'Bz', 'Brho', 'Btheta', 'Bphi'}

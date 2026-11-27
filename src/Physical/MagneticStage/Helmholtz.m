@@ -79,8 +79,9 @@ classdef (Sealed) Helmholtz < BaseObject & EventSender
         EVENT_MAGNETIC_FIELD_CHANGED = 'magneticFieldChanged';
         EVENT_CALIBRATION_CHANGED = 'calibrationChanged';
         EVENT_FLIP_STATE_CHANGED = 'flipStateChanged';
+        EVENT_PREVIEW_CHANGED = 'previewChanged';
 
-        ESR_WIDTH = 5;          % MHz, half width of the lines in the expected-ESR plot
+        ESR_WIDTH = 4;          % MHz, half width of the lines in the expected-ESR plot
         I_TOL = 1e-6;           % A: a current this far past a limit counts as at it
     end
 
@@ -103,6 +104,8 @@ classdef (Sealed) Helmholtz < BaseObject & EventSender
         nominalMatrix       % diag(magnetic_field_ratio) from setupInfo.json
         nominalOffset       % magnetic_field_offset from setupInfo.json
         stateFile = ''      % the json last loaded from or saved to
+        previewB = []       % a field the GUI is CONSIDERING (not applied): drawn on the
+                            % expected-ESR plot next to the present one. [] = none.
     end
 
     properties (Access = private)
@@ -485,6 +488,82 @@ classdef (Sealed) Helmholtz < BaseObject & EventSender
             f = Helmholtz.nvLines(Bq, obj.D);
         end
 
+        % ---- targets: NV axes, and the cube axes where all four NVs are equal ----------
+
+        function T = targetTable(obj)
+            % Every direction the GUI offers (Helmholtz.targetDirections), with the |B| range
+            % the supplies reach EXACTLY along it ([NaN NaN] if never) and the angle to the
+            % present field.
+            T = Helmholtz.targetDirections();
+            for k = 1:numel(T)
+                [lo, hi] = obj.rayLimits(T(k).u);
+                T(k).rhoMin = lo;
+                T(k).rhoMax = hi;
+                T(k).angleToB = acosd(max(min(T(k).u * obj.B(:) / max(obj.Brho, eps), 1), -1));
+            end
+        end
+
+        function [Bq, Iq, angDeg, exact] = closestReachable(obj, Btarget)
+            % The reachable field closest to Btarget (Euclidean, in Gauss), the currents for
+            % it, its angle to Btarget, and whether it IS Btarget.
+            %
+            % Along a cube axis the supplies often need a few mA of NEGATIVE current to cancel
+            % the zero-current field and the cross-talk exactly (setup 7: -0.04 A of Ix for
+            % 40 G along z). Unipolar supplies cannot, but the closest reachable field is then
+            % a fraction of a degree off -- far less than a linewidth of splitting -- and that
+            % is what this returns. A box-constrained least squares in three currents, solved
+            % exactly by trying every set of active limits (27) and keeping the best feasible.
+            Btarget = reshape(Btarget, 3, 1);
+            M = obj.flipSign * obj.coilMatrix;
+            r = Btarget - obj.coilOffset(:);
+            lo = obj.minCurrent(:); hi = obj.maxCurrent(:);
+            best = inf; Iq = [];
+            for code = 0:26
+                s = mod(floor(code ./ [1 3 9]), 3);      % 0 free, 1 at min, 2 at max
+                Ic = zeros(3, 1);
+                fixed = s > 0;
+                Ic(s == 1) = lo(s == 1); Ic(s == 2) = hi(s == 2);
+                if any(~fixed)
+                    A = M(:, ~fixed);
+                    Ic(~fixed) = A \ (r - M(:, fixed) * Ic(fixed));
+                end
+                if any(Ic < lo - obj.I_TOL | Ic > hi + obj.I_TOL); continue; end
+                d = norm(M * Ic - r);
+                if d < best - 1e-12; best = d; Iq = Ic; end
+            end
+            Iq = min(max(Iq', obj.minCurrent), obj.maxCurrent);
+            Bq = obj.fieldFor(Iq);
+            angDeg = acosd(max(min(Bq * Btarget / max(norm(Bq) * norm(Btarget), eps), 1), -1));
+            exact = best < 1e-6;
+        end
+
+        function setDirection(obj, u, rho, maxDeg)
+            % B = rho*u if the supplies can make it, else the closest field they can, as long
+            % as it is within maxDeg degrees of u (default 1). Prints the miss.
+            %   h.setDirection([0 0 1], 30)        % along +z: all four NVs equal
+            if ~exist('maxDeg', 'var') || isempty(maxDeg); maxDeg = 1; end
+            u = reshape(u, 1, 3) / norm(u);
+            [Bq, Iq, ang, exact] = obj.closestReachable(rho * u);
+            if ~exact
+                if ang > maxDeg
+                    obj.sendError(sprintf(['%.2f G along [%s] is out of reach, and the closest ' ...
+                        'reachable field is %.2f deg off (limit %.2f).'], rho, ...
+                        num2str(u, '%.3f '), ang, maxDeg));
+                end
+                fprintf(['Helmholtz: %.2f G along [%s] needs currents outside the supplies'' ' ...
+                         'range; set the closest reachable field instead: %.3f G, %.3f deg off.\n'], ...
+                        rho, num2str(u, '%.3f '), norm(Bq), ang);
+            end
+            obj.setI(Iq);
+        end
+
+        function setPreview(obj, Bq)
+            % A field being considered, drawn next to the present one. [] clears it.
+            if ~isempty(Bq); Bq = reshape(Bq, 1, 3); end
+            obj.previewB = Bq;
+            obj.sendEvent(struct(obj.EVENT_PREVIEW_CHANGED, true));
+        end
+
         function flipDirection(obj, state)
             if obj.flipAvailable
                 state = num2str(state);
@@ -816,6 +895,10 @@ classdef (Sealed) Helmholtz < BaseObject & EventSender
                     obj.JSON_KEY, address));
             end
             s = J.(obj.JSON_KEY);
+            % first, so the window's redraws below already see the new file (the
+            % expected-ESR plot reads the operating frequency from it)
+            obj.stateFile = address;
+            obj.previewB = [];
             if isfield(s, 'calibration') && isstruct(s.calibration)
                 obj.setCoilCalibration(Helmholtz.cleanCalibration(s.calibration));
             else
@@ -861,75 +944,129 @@ classdef (Sealed) Helmholtz < BaseObject & EventSender
 
     %% plots
     methods
-        function plotExpectedESR(obj, gAxes)
-            if ~exist('gAxes', 'var')
-                figure;
-                gAxes = axes(gcf);
+        function xl = plotExpectedESR(obj, gAxes, opts)
+            % The ESR this field should give, from the exact Hamiltonian -- and, when the GUI
+            % is considering a new field (previewB), that one too, dashed. Every dip is marked
+            % and labelled with its frequency and how many orientations share it.
+            %   opts.operatingMHz   the json "frequency", drawn as the MW line (optional)
+            % Returns the x limits it chose, so a caller can keep a user's zoom.
+            if ~exist('gAxes', 'var') || isempty(gAxes)
+                fig = figure('Color', [252 252 251]/255, 'Name', 'expected ESR');
+                gAxes = axes('Parent', fig);
             end
-            cla(gAxes);
-            lines = obj.expectedLines();
+            if ~exist('opts', 'var') || isempty(opts); opts = struct(); end
+            C = Helmholtz.plotColours();
+            ax = gAxes;
+            % NOT cla: cla leaves objects with hidden handles (the fill, the dip markers),
+            % so every redraw would stack on the last
+            delete(allchild(ax));
+            legend(ax, 'off');
+            hold(ax, 'on');
             w = obj.ESR_WIDTH;
-            span = max(abs(lines - obj.D)) + 6*w;
-            f = linspace(obj.D - span, obj.D + span, 1500);
-            y = ones(size(f));
-            for k = 1:numel(lines)
-                y = y - 0.01 * w^2 ./ ((f - lines(k)).^2 + w^2);
+            D0 = obj.D;
+            series = {struct('B', obj.B, 'col', C.s1, 'name', 'present field', 'style', '-')};
+            if ~isempty(obj.previewB)
+                series{end+1} = struct('B', obj.previewB, 'col', C.s2, ...
+                    'name', 'preview (not applied)', 'style', '--');
             end
-            plot(gAxes, f, y, 'k');
-            hold(gAxes, 'on');
-            for k = 1:numel(lines)
-                plot(gAxes, lines(k)*[1 1], [min(y) 1], ':', 'Color', [0.6 0.6 0.6]);
+            allDips = [];
+            for s = 1:numel(series)
+                L = Helmholtz.nvLinesByAxis(series{s}.B, D0);
+                series{s}.dips = Helmholtz.groupDips(L(:));
+                allDips = [allDips; series{s}.dips(:, 1)];                    %#ok<AGROW>
             end
-            hold(gAxes, 'off');
-            xlim(gAxes, [f(1) f(end)]);
-            gAxes.XLabel.String = 'frequency (MHz)';
-            gAxes.YLabel.String = 'expected signal';
-            if obj.isCalibrated
-                gAxes.Title.String = sprintf('|B| = %.2f G, %.2f deg from the nearest NV', ...
-                    obj.Brho, acosd(min(obj.nearestNVcos(), 1)));
-            else
-                gAxes.Title.String = 'UNCALIBRATED: lines assume the coil frame is the crystal frame';
+            lo = min([allDips; D0]) - 7*w; hi = max([allDips; D0]) + 7*w;
+            if isfield(opts, 'operatingMHz') && isfinite(opts.operatingMHz)
+                lo = min(lo, opts.operatingMHz - 3*w); hi = max(hi, opts.operatingMHz + 3*w);
             end
-        end
-
-        function plotFieldMap(obj, gAxes)
-            % The fields the coils can reach (the parallelepiped), the NV axes, and B.
-            if ~exist('gAxes', 'var')
-                figure;
-                gAxes = axes(gcf);
+            f = linspace(lo, hi, 3000);
+            depth1 = 0.01;
+            yMin = 1;
+            H = gobjects(0); names = {};
+            for s = 1:numel(series)
+                dp = series{s}.dips;
+                y = ones(size(f));
+                for k = 1:size(dp, 1)
+                    y = y - depth1 * dp(k, 2) * w^2 ./ ((f - dp(k, 1)).^2 + w^2);
+                end
+                yMin = min(yMin, min(y));
+                if s == 1
+                    fill(ax, [f, fliplr(f)], [y, ones(size(f))], series{s}.col, ...
+                         'FaceAlpha', 0.14, 'EdgeColor', 'none', 'HandleVisibility', 'off', ...
+                         'HitTest', 'off');
+                end
+                hl = plot(ax, f, y, series{s}.style, 'Color', series{s}.col, 'LineWidth', 2);
+                H(end+1) = hl; names{end+1} = series{s}.name;                  %#ok<AGROW>
+                series{s}.y = y;
             end
-            cla(gAxes);
-            hold(gAxes, 'on');
-            % parallelepiped: the 8 corners of the current box mapped through the model
-            [a, b, c] = ndgrid([0 1], [0 1], [0 1]);
-            frac = [a(:), b(:), c(:)];
-            Ic = obj.minCurrent + frac .* (obj.maxCurrent - obj.minCurrent);
-            Bc = obj.fieldFor(Ic);
-            faces = [1 2 4 3; 5 6 8 7; 1 2 6 5; 3 4 8 7; 1 3 7 5; 2 4 8 6];
-            patch(gAxes, 'Vertices', Bc, 'Faces', faces, 'FaceColor', [1 0.6 0.6], ...
-                  'FaceAlpha', 0.12, 'EdgeColor', [0.8 0.3 0.3]);
-            L = 1.1 * max(sqrt(sum(Bc.^2, 2)));
+            span = 1 - yMin; if span <= 0; span = 0.01; end
+            % the dips: a marker at each minimum, and its frequency (x multiplicity) under it
+            for s = 1:numel(series)
+                dp = series{s}.dips;
+                yd = interp1(f, series{s}.y, dp(:, 1));
+                hm = plot(ax, dp(:, 1), yd, 'v', 'MarkerSize', 7, 'LineWidth', 1, ...
+                          'Color', series{s}.col, 'MarkerFaceColor', series{s}.col, ...
+                          'HandleVisibility', 'off');
+                try
+                    hm.DataTipTemplate.DataTipRows(1).Label = 'dip (MHz)';
+                    hm.DataTipTemplate.DataTipRows(2).Label = 'signal';
+                    hm.DataTipTemplate.DataTipRows(end+1) = dataTipTextRow('orientations', dp(:, 2));
+                catch
+                end
+                for k = 1:size(dp, 1)
+                    lbl = sprintf('%.1f', dp(k, 1));
+                    if dp(k, 2) > 1; lbl = sprintf('%s  x%d', lbl, dp(k, 2)); end
+                    if s == 1
+                        % present field: under its dip
+                        text(ax, dp(k, 1), yd(k) - 0.04*span, lbl, 'Color', series{s}.col, ...
+                             'FontSize', 8, 'FontWeight', 'bold', 'Rotation', 90, ...
+                             'HorizontalAlignment', 'right', 'VerticalAlignment', 'middle', ...
+                             'HitTest', 'off');
+                    else
+                        % preview: above the baseline, so a close pair of labels cannot overlap
+                        text(ax, dp(k, 1), 1 + 0.04*span, lbl, 'Color', series{s}.col, ...
+                             'FontSize', 8, 'FontWeight', 'bold', 'Rotation', 90, ...
+                             'HorizontalAlignment', 'left', 'VerticalAlignment', 'middle', ...
+                             'HitTest', 'off');
+                    end
+                end
+            end
+            top = 0.12; if numel(series) > 1; top = 0.5; end
+            yl = [1 - span*1.75, 1 + span*top];
+            plot(ax, D0*[1 1], yl, ':', 'Color', C.ink2, 'LineWidth', 1, 'HandleVisibility', 'off', ...
+                 'HitTest', 'off');
+            text(ax, D0, yl(1), sprintf(' D %.1f', D0), 'Color', C.ink2, 'FontSize', 8, ...
+                 'VerticalAlignment', 'bottom', 'HitTest', 'off');
+            if isfield(opts, 'operatingMHz') && isfinite(opts.operatingMHz)
+                ho = plot(ax, opts.operatingMHz*[1 1], yl, '-.', 'Color', C.ok, 'LineWidth', 1.3);
+                text(ax, opts.operatingMHz, yl(1), sprintf(' MW %.2f', opts.operatingMHz), ...
+                     'Color', C.ok, 'FontSize', 8, 'FontWeight', 'bold', ...
+                     'VerticalAlignment', 'bottom', 'HitTest', 'off');
+                H(end+1) = ho; names{end+1} = 'operating frequency (json)';
+            end
+            hold(ax, 'off');
+            Helmholtz.styleAxes(ax, C);
+            xlim(ax, [lo hi]); ylim(ax, yl);
+            xl = [lo hi];
+            xlabel(ax, 'frequency (MHz)', 'Color', C.ink2);
+            ylabel(ax, 'expected signal (normalised)', 'Color', C.ink2);
+            [kN, c] = obj.nearestNV();
             dirs = Helmholtz.nvDirections();
-            for k = 1:4
-                plot3(gAxes, L*[0 dirs(k,1)], L*[0 dirs(k,2)], L*[0 dirs(k,3)], '-', ...
-                      'Color', [0.2 0.2 0.2], 'LineWidth', 1.5);
-                plot3(gAxes, L*[0 dirs(k+4,1)], L*[0 dirs(k+4,2)], L*[0 dirs(k+4,3)], ':', ...
-                      'Color', [0.2 0.2 0.2], 'LineWidth', 1.5);
-                text(gAxes, L*dirs(k,1), L*dirs(k,2), L*dirs(k,3), ...
-                     sprintf('[%s]', num2str(round(dirs(k,:)*sqrt(3)))), 'FontSize', 8);
+            t1 = sprintf('|B| = %.2f G,  %.2f deg from NV [%+d %+d %+d]', obj.Brho, ...
+                         acosd(min(c, 1)), round(dirs(kN, :)*sqrt(3)));
+            if ~obj.isCalibrated
+                t1 = [t1 '   --   UNCALIBRATED: lines assume the coil frame is the crystal frame'];
             end
-            Bn = obj.B;
-            quiver3(gAxes, 0, 0, 0, Bn(1), Bn(2), Bn(3), 0, 'r', 'LineWidth', 2.5, ...
-                    'MaxHeadSize', 0.4);
-            plot3(gAxes, 0, 0, 0, 'k.', 'MarkerSize', 12);
-            hold(gAxes, 'off');
-            axis(gAxes, 'equal');
-            grid(gAxes, 'on');
-            gAxes.XLabel.String = 'B_x (G)';
-            gAxes.YLabel.String = 'B_y (G)';
-            gAxes.ZLabel.String = 'B_z (G)';
-            gAxes.Title.String = obj.frameName;
-            view(gAxes, 135, 25);
+            title(ax, t1, 'Color', C.ink, 'FontWeight', 'bold', 'FontSize', 10);
+            % always set: a subtitle is not a child, so it outlives the redraw
+            if ~isempty(obj.previewB)
+                subtitle(ax, sprintf('preview: |B| = %.2f G  (press Go to apply)', ...
+                         norm(obj.previewB)), 'Color', C.s2, 'FontSize', 9);
+            else
+                subtitle(ax, '');
+            end
+            lg = legend(ax, H, names, 'Location', 'southeast', 'Box', 'off', 'FontSize', 8);
+            lg.TextColor = C.ink2;
         end
     end
 
@@ -997,6 +1134,111 @@ classdef (Sealed) Helmholtz < BaseObject & EventSender
             % theta = 54.7356, phi = 45, 135, -135, -45); 5-8 are their opposites.
             v = [1 1 1; -1 1 1; -1 -1 1; 1 -1 1];
             dirs = [v; -v] / sqrt(3);
+        end
+
+        function T = targetDirections()
+            % The directions the GUI offers to put B along:
+            %   'NV'    the 8 signed NV axes -- one orientation aligned, three equivalent at
+            %           109.47 deg: four lines, the outer pair split by 2*gamma*|B|
+            %   'equal' the 6 cube axes (+-x, +-y, +-z) -- every NV axis at 54.74 deg to B,
+            %           so all four orientations are equivalent: TWO lines, 4x the depth
+            dirs = Helmholtz.nvDirections();
+            T = struct('label', {}, 'kind', {}, 'u', {}, 'rhoMin', {}, 'rhoMax', {}, ...
+                       'angleToB', {});
+            for k = 1:8
+                T(end+1) = struct('label', sprintf('NV [%+d %+d %+d]', round(dirs(k, :)*sqrt(3))), ...
+                    'kind', 'NV', 'u', dirs(k, :), 'rhoMin', NaN, 'rhoMax', NaN, ...
+                    'angleToB', NaN);                                                    %#ok<AGROW>
+            end
+            names = {'+x', '+y', '+z', '-x', '-y', '-z'};
+            E = [eye(3); -eye(3)];
+            for k = 1:6
+                T(end+1) = struct('label', sprintf('%s  (all 4 NV equal)', names{k}), ...
+                    'kind', 'equal', 'u', E(k, :), 'rhoMin', NaN, 'rhoMax', NaN, ...
+                    'angleToB', NaN);                                                    %#ok<AGROW>
+            end
+        end
+
+        function L = nvLinesByAxis(Bq, D)
+            % 4 x 2: [lower upper] transition (MHz) of each NV orientation, in NV_AXES order.
+            if ~exist('D', 'var'); D = Helmholtz.D_DEFAULT; end
+            g = Helmholtz.GAMMA;
+            Bq = Bq(:);
+            L = zeros(4, 2);
+            for k = 1:4
+                bz = Helmholtz.NV_AXES(k, :) * Bq;
+                bp = sqrt(max(Bq' * Bq - bz^2, 0)) / sqrt(2);
+                H = [D + g*bz, g*bp, 0; g*bp, 0, g*bp; 0, g*bp, D - g*bz];
+                ev = sort(eig(H));
+                L(k, :) = [ev(2) - ev(1), ev(3) - ev(1)];
+            end
+        end
+
+        function d = dipsAlong(u, rho, D)
+            % Where the dips land for |B| = rho along unit direction u (exact Hamiltonian):
+            %   d.outer = [lowest highest]                  -- the widest pair
+            %   d.inner = [highest lower, lowest upper]     -- the pair nearest D
+            % For an NV axis the outer pair is the aligned orientation (D -+ gamma*rho
+            % exactly) and the inner pair the three others; along a cube axis all four are
+            % equivalent and inner = outer.
+            L = Helmholtz.nvLinesByAxis(rho * reshape(u, 1, 3) / norm(u), D);
+            d.outer = [min(L(:, 1)), max(L(:, 2))];
+            d.inner = [max(L(:, 1)), min(L(:, 2))];
+        end
+
+        function rho = rhoForDip(u, D, which, f)
+            % The |B| along u that puts dip `which` ('outerLo' 'outerHi' 'innerLo' 'innerHi')
+            % at f MHz. Each moves monotonically with |B| below ~120 G, so bisection. NaN if
+            % no |B| in 0..120 G puts it there.
+            g = @(r) Helmholtz.pickDip(Helmholtz.dipsAlong(u, r, D), which) - f;
+            a = 0; b = 120; fa = g(a); fb = g(b);
+            rho = NaN;
+            if ~isfinite(fa) || ~isfinite(fb) || fa*fb > 0; return; end
+            for it = 1:60
+                m = 0.5*(a + b); fm = g(m);
+                if fa*fm <= 0; b = m; else; a = m; fa = fm; end
+            end
+            rho = 0.5*(a + b);
+        end
+
+        function g = groupDips(f)
+            % Distinct dips and how many transitions share each (within 0.5 MHz): rows
+            % [frequency multiplicity], by frequency.
+            f = sort(f(:));
+            g = zeros(0, 2);
+            k = 1;
+            while k <= numel(f)
+                j = k;
+                while j < numel(f) && f(j+1) - f(k) < 0.5; j = j + 1; end
+                g(end+1, :) = [mean(f(k:j)), j - k + 1];                          %#ok<AGROW>
+                k = j + 1;
+            end
+        end
+
+        function C = plotColours()
+            % fitStyle's palette (Setup 7\functions\fitStyle.m), so the GUI reads like the fits.
+            C = struct('surface', [252 252 251]/255, 'ink', [20 20 20]/255, ...
+                       'ink2', [82 81 78]/255, 's1', [235 104 52]/255, ...
+                       's2', [122 61 148]/255, 's3', [107 120 133]/255, ...
+                       'ok', [0 115 89]/255, 'band', [219 224 232]/255);
+        end
+
+        function styleAxes(ax, C)
+            % fitStyle's axes: solid grid at 12% behind the data, ticks out, no box.
+            grid(ax, 'on'); box(ax, 'off');
+            set(ax, 'FontSize', 9, 'XColor', C.ink2, 'YColor', C.ink2, 'TickDir', 'out', ...
+                    'Color', C.surface, 'GridLineStyle', '-', 'GridAlpha', 0.12, ...
+                    'Layer', 'bottom');
+        end
+
+        function v = pickDip(d, which)
+            switch which
+                case 'outerLo'; v = d.outer(1);
+                case 'outerHi'; v = d.outer(2);
+                case 'innerLo'; v = d.inner(1);
+                case 'innerHi'; v = d.inner(2);
+                otherwise; error('Helmholtz:dip', 'no dip "%s"', which);
+            end
         end
 
         function r = sph2cartPhys(rho, theta, phi)

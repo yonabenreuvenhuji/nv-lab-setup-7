@@ -2,8 +2,9 @@ classdef viewHelmholtz < ViewVBox
     %VIEWHELMHOLTZ The Helmholtz window.
     %
     %   column 1  field control: general, spherical, cartesian, currents
-    %   column 2  the expected ESR at this field, and the reachable fields vs the NV axes
-    %   column 3  align with an NV axis, the coil model in use, save / load
+    %   column 2  the expected ESR at this field (and at the one the Align panel is
+    %             previewing), interactive
+    %   column 3  align B (direction, |B|, dip positions), the coil model in use, save / load
     %   bottom    error messages
     %
     % The diamond-placement controls and drawing are gone: the coil calibration
@@ -21,12 +22,11 @@ classdef viewHelmholtz < ViewVBox
             column3 = ViewVBox(mainView, controller);
             ViewVBox(mainView, controller);     % dummy column, so column 3 does not end at the window edge
 
-            % column 2
+            % column 2: the expected ESR, given the whole column
             viewExpectedESR = ViewExpectedESR(column2, controller);
-            viewFieldMap = ViewFieldMap(column2, controller);
-            column2.setHeights([viewExpectedESR.height, viewFieldMap.height]);
-            column2width = max(viewExpectedESR.width, viewFieldMap.width);
-            column2height = viewExpectedESR.height + viewFieldMap.height + 10;
+            column2.setHeights(-1);
+            column2width = viewExpectedESR.width;
+            column2height = viewExpectedESR.height + 10;
 
             % column 3
             vNV = ViewNVAlignment(column3, controller);
