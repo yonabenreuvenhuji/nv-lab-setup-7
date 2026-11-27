@@ -34,7 +34,8 @@ function h = progressbar(handle, varargin)
         
         if nargin == 3
             ttl = (varargin{2});
-            title(ax, ttl);
+            t = title(ax, ttl);
+            set(t, 'FontWeight', 'normal', 'FontSize', 9, 'Color', [0.32 0.32 0.31]);  % (main window's text)
         end
         drawnow
         
@@ -42,8 +43,10 @@ function h = progressbar(handle, varargin)
             && ishandle(handle)
         % No colorbar yet, so we need to create it
         % We first need to create the progress bar
-        bg_color = [.6 .6 .6];        %'b';
-        fg_color = [0 .75 0]; %'r';
+        % The main window's progress bar look: blue fill on white, light frame
+        bg_color = [1 1 1];
+        fg_color = [58 111 216]/255;
+        frame_color = [0.80 0.80 0.78];
         parentFigure = ancestor(handle, 'figure');
         previousAxes = parentFigure.CurrentAxes;
         restoreAxes = onCleanup(@() set(parentFigure, 'CurrentAxes', previousAxes));
@@ -51,8 +54,8 @@ function h = progressbar(handle, varargin)
             'Units',    'normalized', ...
             'XLim',     [0 1],      'YLim',     [0 1],...
             'XTick',    [],         'YTick',    [],...
-            'Color',    bg_color, ...
-            'XColor',   bg_color,   'YColor', bg_color, ...
+            'Color',    bg_color, 'Box', 'on', ...
+            'XColor',   frame_color,   'YColor', frame_color, ...
             'NextPlot', 'replacechildren');
         patch([0 0 0 0], [0 1 1 0], fg_color,...
             'Parent',    handle, ...

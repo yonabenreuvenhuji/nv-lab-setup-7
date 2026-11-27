@@ -58,10 +58,10 @@ classdef ViewExperimentPlot < ViewVBox & EventListener
         AUTOFIT_VALUES = {'off', 'end', 'average'}
         AUTOFIT_ITEMS = {'Off', 'When the run ends', 'After every average'}
         FIT_PANEL_WIDTH = 270
-        COLOR_SAVED = [0.80 0.93 0.80]
-        COLOR_UNSAVED = [1.00 0.86 0.60]
-        COLOR_RUNNING = [0.86 0.91 0.98]
-        COLOR_EMPTY = [0.92 0.92 0.92]
+        COLOR_SAVED = [0.86 0.93 0.87]      % (main window palette: pale green)
+        COLOR_UNSAVED = [1.00 0.93 0.76]    % pale amber, as a pending target
+        COLOR_RUNNING = [0.88 0.92 0.98]    % pale blue
+        COLOR_EMPTY = [0.925 0.925 0.915]   % read-only grey
     end
 
     methods
@@ -126,6 +126,7 @@ classdef ViewExperimentPlot < ViewVBox & EventListener
                 'Callback', @obj.btnEmergencyStopCallback);
 
             fig.Heights = [-1, 42, 50, 36];
+            obj.applyMainStyle();
 
             obj.height = 640;
             obj.width = max([wControls, 760 + obj.hasFitPanel * (obj.FIT_PANEL_WIDTH + 8)]);
@@ -139,6 +140,64 @@ classdef ViewExperimentPlot < ViewVBox & EventListener
 
     %% Building
     methods (Access = private)
+        function applyMainStyle(obj)
+            % The main window's look (MainGuiStyle) on this window's buttons and text:
+            % colours, fonts and weights only -- no size or position changes.
+            %   Start / Pause   blue / brick red (was green / red)
+            %   Restart, Open In Figure, Save   plain buttons (Restart was bright blue)
+            %   Halt Experiment brick red, like the main window's Halt
+            %   Fit             blue (the panel's main action); Clear, Copy, To workspace quiet
+            %   text            secondary ink, 9 pt; headings bold
+            C = MainGuiStyle.col();
+            obj.btnStartStop.colors = {C.accent, C.stop};
+            obj.btnStartStop.isRunning = obj.btnStartStop.isRunning;    % repaint
+            set(obj.btnStartStop.component, 'FontSize', 13, 'ForegroundColor', [1 1 1], 'FontWeight', 'bold');
+            MainGuiStyle.paintButton(obj.btnRestart, 'normal');
+            set(obj.btnRestart, 'FontWeight', 'bold', 'FontSize', 11);
+            MainGuiStyle.paintButton(obj.btnOpenInFig, 'normal');
+            MainGuiStyle.paintButton(obj.btnSave, 'normal');
+            set(obj.btnSave, 'FontWeight', 'bold');
+            MainGuiStyle.paintButton(obj.btnEmergencyStop, 'stop');
+            set(obj.btnEmergencyStop, 'FontSize', 12);
+            set(obj.txtSaveStatus, 'FontSize', 9, 'ForegroundColor', C.ink);
+
+            % View selector: title and options in the main window's text style
+            set(obj.bgDisplay, 'FontSize', 9, 'FontWeight', 'bold', 'ForegroundColor', C.ink2);
+            radios = findobj(obj.bgDisplay, 'Style', 'radiobutton');
+            set(radios, 'FontSize', 9, 'ForegroundColor', C.ink);
+
+            % Progress bars: blue fill on white, normal-weight titles
+            for ax = [obj.progressbarAverages, obj.progressbarParameters]
+                set(ax, 'Color', [1 1 1], 'XColor', C.line, 'YColor', C.line, 'Box', 'on');
+                set(findobj(ax, 'Tag', 'ProgressbarFill'), 'FaceColor', C.accent);
+                set(ax.Title, 'FontWeight', 'normal', 'FontSize', 9, 'Color', C.ink2);
+            end
+
+            if obj.hasFitPanel
+                MainGuiStyle.paintButton(obj.btnFit, 'pending');
+                MainGuiStyle.paintButton(obj.btnClearFit, 'quiet');
+                MainGuiStyle.paintButton(obj.btnFitCopy, 'quiet');
+                MainGuiStyle.paintButton(obj.btnFitWorkspace, 'quiet');
+                set(obj.txtFitWhat, 'FontSize', 9, 'ForegroundColor', C.ink3);
+                set(obj.txtFitResult, 'ForegroundColor', C.ink, 'BackgroundColor', C.surface);
+                set(obj.popupAutoFit, 'FontSize', 9, 'ForegroundColor', C.ink, 'BackgroundColor', C.field);
+                panel = ancestor(obj.btnFit, 'uipanel');
+                if ~isempty(panel); MainGuiStyle.borderColor(panel, C.line); end
+                % headings and labels in the panel
+                texts = findobj(panel, 'Style', 'text');
+                set(texts, 'ForegroundColor', C.ink2, 'FontSize', 9);
+                set(findobj(texts, 'FontWeight', 'bold'), 'ForegroundColor', C.ink);
+                set(obj.txtFitWhat, 'ForegroundColor', C.ink3);
+                set(findobj(panel, 'Style', 'checkbox'), 'ForegroundColor', C.ink, 'FontSize', 9);
+                set(findobj(panel, 'Style', 'popupmenu'), 'ForegroundColor', C.ink, 'BackgroundColor', C.field);
+                set(findobj(panel, 'Style', 'edit', 'Enable', 'on'), 'ForegroundColor', C.ink, 'BackgroundColor', C.field);
+                % the panel's heading ("Fit  (esrFitRobust)") a little larger
+                for t = findobj(panel, 'Style', 'text')'
+                    if startsWith(t.String, 'Fit  ('); set(t, 'FontSize', 10); end
+                end
+            end
+        end
+
         function wTotal = buildViewSelector(obj, parent, exp)
             % Normal | the experiment's alternate view | the raw detection windows
             obj.bgDisplay = uibuttongroup( ...
