@@ -134,9 +134,15 @@ classdef (Sealed) Helmholtz < BaseObject & EventSender
             %     S replaces the "Helmholtz" section of setupInfo.json (with "type": "dummy"
             %     supplies this runs with no hardware -- see testHelmholtzOffline), and
             %     gui = false skips the window.
+            % h = Helmholtz(struct('setup', S, 'name', 'Helmholtz_offlineRig'))
+            %     a second, independent object -- registered and sending events under its own
+            %     name, so getObjByName('Helmholtz') and the GUI keep the live one. No window.
+            %     (helmholtzOfflineRig uses this to run a grader alongside the setup.)
             if ~exist('opts', 'var') || isempty(opts); opts = struct(); end
-            obj@BaseObject(Helmholtz.NAME);
-            obj@EventSender(Helmholtz.NAME);
+            objName = Helmholtz.NAME;
+            if isfield(opts, 'name') && ~isempty(opts.name); objName = char(opts.name); end
+            obj@BaseObject(objName);
+            obj@EventSender(objName);
             obj.helmOn = 0;
             obj.helmControl = obj.CONTROL_STATE{3};
             obj.stepSize = 1;
@@ -147,6 +153,7 @@ classdef (Sealed) Helmholtz < BaseObject & EventSender
             obj.Initialize(setup);
             addBaseObject(obj);  % so it can be reached by getObjByName()
             if isfield(opts, 'gui') && ~opts.gui; return; end
+            if ~strcmp(objName, Helmholtz.NAME); return; end     % the GUI shows 'Helmholtz' only
             try
                 HelmholtzGUI().start;
             catch err
@@ -789,8 +796,9 @@ classdef (Sealed) Helmholtz < BaseObject & EventSender
                     ps.close;
                 end
             end
-            h = getObjByName('Helmholtz');
-            if ~isempty(h); h.delete; end
+            % THIS object, not whatever is registered as 'Helmholtz': closing a second
+            % (offline) object must never delete the live one.
+            if isvalid(obj); delete(obj); end
         end
 
         function reset(obj)

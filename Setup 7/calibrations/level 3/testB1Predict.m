@@ -5,7 +5,8 @@ function out = testB1Predict(opts)
 %   testB1Predict(struct('plotIt', true, 'compareMeasure', true))
 %
 % A real Helmholtz object on dummy supplies (helmholtzOfflineRig) carries the 2026-11-23
-% coil calibration; the ESR survey and the Rabi are simulated (calibB1Rabi's surveyFn and
+% coil calibration -- a separate one when the setup is running, so this is safe in the lab
+% session; the ESR survey and the Rabi are simulated (calibB1Rabi's surveyFn and
 % rabiFn hooks). The simulation has the two things the 2026-11-27 lab run showed:
 %
 %   - the coil calibration is slightly off: the TRUE |B| is 0.99*Brho - 0.10 G
@@ -30,7 +31,10 @@ function out = testB1Predict(opts)
     src = fullfile(s7, 'calibrations', 'results', '2026-11-23', 'expProperties.json');
     json = [tempname '.json'];
     copyfile(src, json);
-    [h, rig] = helmholtzOfflineRig(json);     % deleting rig closes h and removes the stub
+    % Safe next to the live setup: alongside a live session h is a SECOND object on dummy
+    % supplies (named 'Helmholtz_offlineRig'), handed to calibB1Rabi through its 'helmholtz'
+    % option. The live object, its supplies and its currents are never touched.
+    [h, rig] = helmholtzOfflineRig(json, struct('alongsideLive', true));   % delete(rig) closes h
 
     TRUE = struct('a', 0.99, 'b', -0.10, 'D', 2870.20, 'f0', 2763.75, 'W', 31.6, ...
                   'A', 219, 'floor', 18.7);
@@ -43,7 +47,7 @@ function out = testB1Predict(opts)
 
     base = struct('rhoCoarse', 34:1:46, 'settle', 0, 'saveRaw', false, ...
         'plotIt', opts.plotIt, 'jsonLocation', json, 'surveyFn', @fakeSurvey, ...
-        'rabiFn', @fakeRabi, 'controlAuto', false);
+        'rabiFn', @fakeRabi, 'controlAuto', false, 'helmholtz', h);
     o = base; o.esrMode = 'predict';
     res = calibB1Rabi(o);
 
