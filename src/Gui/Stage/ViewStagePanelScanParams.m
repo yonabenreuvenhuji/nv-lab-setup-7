@@ -1,27 +1,23 @@
 classdef ViewStagePanelScanParams < GuiComponent & EventListener & EventSender
     %VIEWSTAGEPANELSCANPARAMS The "Scan area" section: what each axis does in a scan.
     %
-    %   Axis Scan  From (µm)  To (µm)  Dir  Points  Step (µm)  Centre (µm)  Span (µm)
-    %    X   [x]   [-20   ]   [ 20  ]  [→]  [ 41 ]  [  1   ]   [   0     ]  [  40   ]
-    %    Y   [x]   ...
-    %    Z   [ ]   (greyed: not scanned)                       [  2.5    ]  (grey)
-    %   [Centre ← stage]  [Range = centre ± span/2]  [Full soft range]  [Go to centre]
+    %                   Range                    Points             Centre
+    %   Axis Scan  From    To      Dir     Points  Step       Centre   Span
+    %    X   [x]  [-20 ]  [ 20 ]  [→]      [ 41 ]  [ 1  ]     [  0  ]  [ 40 ]  [Set]
+    %    Z   [ ]  (greyed, still editable: not scanned)       [ 2.5 ]  ...
+    %   [Stage → centre]   [Full soft range]   [Move stage to centre]
     %   2D · lines along X, stepping Y · 41 × 41 = 1,681 pixels · at least 25 s
     %
-    % WHAT USED TO BE "Fix" / "Fixed". "Fix" ticked meant "this axis is NOT scanned", and
-    % "Fixed" was the position such an axis is held at -- which is ALSO the centre that "Scan
-    % Around" built the range from. So the two were not the same thing, and greying out
-    % "Fixed" when "Fix" was off hid a number that was still in use. Now:
-    %   Scan     ticked = this axis is scanned (the opposite of the old Fix).
-    %   Centre   always editable: where an unscanned axis stays during the scan, and the
-    %            middle of the range when you set a Span. (Stored as scanParams.fixedPos.)
-    %   From / To / Dir / Points / Step / Span only matter for a scanned axis, so they are
-    %            greyed when Scan is off (they keep their values).
-    %   Step     editable: changing it changes Points to fit the range.
-    %   Span     editable: From/To = Centre ± Span/2.
-    %   Dir      → = from "From" to "To"; ← = the other way. The image is the same either
-    %            way (it is always stored From -> To); only the order the stage moves in
-    %            changes, which matters with backlash or drift.
+    % Three groups, left to right:
+    %   Range    From, To and the direction (→ From to To, ← the other way; the image is
+    %            the same either way, only the order the stage moves in changes).
+    %   Points   how many, and the distance between them (typing a step changes Points).
+    %   Centre   where the axis stays when it is NOT scanned, and the middle of the range
+    %            for Span: Set (per axis) makes From/To = Centre ± Span/2. Typing a Span and
+    %            Enter does the same. (Centre is stored as scanParams.fixedPos -- the old
+    %            "Fixed"; the old "Fix" tick is now "Scan", the other way round.)
+    % An axis that is not scanned has its Range and Points greyed, but they stay editable,
+    % so a scan can be set up before the axis is ticked.
 
     properties
         cbxScan             % 1xN checkbox: scan this axis
@@ -32,18 +28,20 @@ classdef ViewStagePanelScanParams < GuiComponent & EventListener & EventSender
         edtStep             % 1xN
         edtCentre           % 1xN (scanParams.fixedPos)
         edtSpan             % 1xN
+        btnSetAround        % 1xN: From/To = Centre ± Span/2
         tvSummary           % one line: what the scan will do
-        btnCentreHere
-        btnRangeAround
+        btnCentreHere       % Stage → centre
         btnFullRange
-        btnGoCentre
+        btnGoCentre         % Move stage to centre
 
         stageName   % string. the name of the relevant stage
         stageAxes   % string. valid axes of the stage. example: "zx"
     end
 
     properties (Constant)
-        COL_WIDTHS = [20 38 66 66 30 48 62 70 58]
+        % axis | scan | gap | from | to | dir | gap | points | step | gap | centre | span | set
+        COL_WIDTHS = [20 34 6 62 62 28 12 44 58 12 64 56 34]
+        GROUPS = {[4 6], [8 9], [11 13]}    % columns of Range, Points, Centre
     end
 
     methods
@@ -55,16 +53,21 @@ classdef ViewStagePanelScanParams < GuiComponent & EventListener & EventSender
             obj.stageAxes = stage.availableAxes;
             n = length(stage.availableAxes);
             S = MainGuiStyle;
+            C = MainGuiStyle.col();
             um = MainGuiStyle.micron;
+            sp = 4;     % grid spacing
 
             [panel, inner] = MainGuiStyle.section(parent.component, 'Scan area');
             obj.component = panel;
 
+            % Group titles over the columns, each with a rule under it
+            W = obj.COL_WIDTHS;
+            MainGuiStyle.groupTitles(inner, W, sp, obj.GROUPS, {'Range', 'Points', 'Centre'});
+
             gridRow = MainGuiStyle.hbox(inner, 0);
-            grid = MainGuiStyle.grid(gridRow, 4);
+            grid = MainGuiStyle.grid(gridRow, sp);
             MainGuiStyle.empty(gridRow);
 
-            % columns: axis | scan | from | to | dir | points | step | centre | span
             MainGuiStyle.empty(grid);
             for i = 1:n; MainGuiStyle.axisTag(grid, obj.stageAxes(i)); end
 
@@ -77,43 +80,53 @@ classdef ViewStagePanelScanParams < GuiComponent & EventListener & EventSender
                     sprintf('Scan along %s. Off: %s stays at its Centre during the scan.', upper(obj.stageAxes(i)), upper(obj.stageAxes(i))));
                 box.Widths = [-1 18];
             end
+            obj.gapColumn(grid, n);
 
+            % Range
             obj.edtFrom = obj.column(grid, sprintf('From (%s)', um), n, 'First point of the range');
             obj.edtTo = obj.column(grid, sprintf('To (%s)', um), n, 'Last point of the range');
-
             MainGuiStyle.header(grid, 'Dir');
             obj.btnDir = gobjects(1, n);
             for i = 1:n
                 obj.btnDir(i) = MainGuiStyle.button(grid, char(8594), 'normal', 'FontSize', 11);
             end
+            obj.gapColumn(grid, n);
 
+            % Points
             obj.edtNumPoints = obj.column(grid, 'Points', n, 'Number of points along this axis');
             obj.edtStep = obj.column(grid, sprintf('Step (%s)', um), n, ...
                 'Distance between points. Typing a step changes Points to fit From-To.');
-            obj.edtCentre = obj.column(grid, sprintf('Centre (%s)', um), n, ...
-                'Where this axis stays when it is not scanned, and the middle of the range when you type a Span');
-            obj.edtSpan = obj.column(grid, sprintf('Span (%s)', um), n, ...
-                'Length of the range. Typing a span sets From/To = Centre ± Span/2.');
+            obj.gapColumn(grid, n);
 
-            set(grid, 'Widths', obj.COL_WIDTHS, 'Heights', [S.HEAD_H, S.ROW_H * ones(1, n)]);
-            gridRow.Widths = [sum(obj.COL_WIDTHS) + 4*numel(obj.COL_WIDTHS), -1];
+            % Centre
+            obj.edtCentre = obj.column(grid, sprintf('Centre (%s)', um), n, ...
+                'Where this axis stays when it is not scanned, and the middle of the range for Span');
+            obj.edtSpan = obj.column(grid, sprintf('Span (%s)', um), n, ...
+                'Length of the range around the centre. Enter (or Set) makes From/To = Centre ± Span/2.');
+            MainGuiStyle.empty(grid);
+            obj.btnSetAround = gobjects(1, n);
+            for i = 1:n
+                obj.btnSetAround(i) = MainGuiStyle.button(grid, 'Set', 'normal', 'TooltipString', ...
+                    sprintf('%s: From / To = Centre %s Span/2', upper(obj.stageAxes(i)), char(177)));
+            end
+
+            set(grid, 'Widths', W, 'Heights', [S.HEAD_H, S.ROW_H * ones(1, n)]);
+            gridRow.Widths = [sum(W) + sp*numel(W), -1];
 
             buttons = MainGuiStyle.hbox(inner, S.GAP);
-            obj.btnCentreHere = MainGuiStyle.button(buttons, [sprintf('Centre %s stage', char(8592))], 'normal', ...
-                'TooltipString', 'Set every Centre to where the stage is now');
-            obj.btnRangeAround = MainGuiStyle.button(buttons, sprintf('Range = centre %s span/2', char(177)), 'normal', ...
-                'TooltipString', 'For every scanned axis: From/To = Centre ± Span/2');
+            obj.btnCentreHere = MainGuiStyle.button(buttons, sprintf('Stage %s centre', char(8594)), 'normal', ...
+                'TooltipString', 'Copy where the stage is now into every Centre');
             obj.btnFullRange = MainGuiStyle.button(buttons, 'Full soft range', 'normal', ...
-                'TooltipString', 'For every scanned axis: From/To = the soft limits');
-            obj.btnGoCentre = MainGuiStyle.button(buttons, 'Go to centre', 'normal', ...
-                'TooltipString', 'Move the stage to the Centre of every axis');
-            buttons.Widths = [-1.1 -1.4 -1 -0.9];
+                'TooltipString', 'For every scanned axis: From / To = the soft limits');
+            obj.btnGoCentre = MainGuiStyle.button(buttons, 'Move stage to centre', 'normal', ...
+                'TooltipString', 'Move the stage to the Centre of every axis (e.g. to look at the middle of the scan area)');
+            buttons.Widths = [-1 -1 -1];
 
             obj.tvSummary = MainGuiStyle.hint(inner, '');
 
-            inner.Heights = [S.HEAD_H + n*S.ROW_H + 4*n, S.ROW_H, 16];
+            inner.Heights = [15, S.HEAD_H + n*S.ROW_H + sp*n, S.ROW_H, 16];
             obj.height = MainGuiStyle.sectionHeight(MainGuiStyle.rowsHeight(inner.Heights));
-            obj.width = sum(obj.COL_WIDTHS) + 60;
+            obj.width = sum(W) + sp*numel(W) + 20;
 
             %%%% Callbacks %%%%
             for i = 1:n
@@ -125,9 +138,9 @@ classdef ViewStagePanelScanParams < GuiComponent & EventListener & EventSender
                 set(obj.edtStep(i), 'Callback', @(h,e) obj.edtStepCallback(i));
                 set(obj.edtCentre(i), 'Callback', @(h,e) obj.edtFixedChangedCallback(i));
                 set(obj.edtSpan(i), 'Callback', @(h,e) obj.edtSpanCallback(i));
+                set(obj.btnSetAround(i), 'Callback', @(h,e) obj.edtSpanCallback(i));
             end
             obj.btnCentreHere.Callback = @(h,e) obj.btnCentreHereCallback();
-            obj.btnRangeAround.Callback = @(h,e) obj.btnRangeAroundCallback();
             obj.btnFullRange.Callback = @(h,e) obj.btnFullRangeCallback();
             obj.btnGoCentre.Callback = @(h,e) obj.btnGoCentreCallback();
 
@@ -137,6 +150,7 @@ classdef ViewStagePanelScanParams < GuiComponent & EventListener & EventSender
         function refresh(obj)
             [stage, scanParams] = obj.getStageAndParams();
             um = MainGuiStyle.micron;
+            C = MainGuiStyle.col();
             for i = 1 : length(obj.stageAxes)
                 k = ClassStage.getAxis(obj.stageAxes(i));     % index in scan params
                 isScanned = ~scanParams.isFixed(k);
@@ -159,10 +173,9 @@ classdef ViewStagePanelScanParams < GuiComponent & EventListener & EventSender
                         MainGuiStyle.num(scanParams.from(k)), char(8594), MainGuiStyle.num(scanParams.to(k)), um));
                 end
 
-                MainGuiStyle.setFieldEnabled([obj.edtFrom(i), obj.edtTo(i), obj.edtNumPoints(i), ...
-                    obj.edtStep(i), obj.edtSpan(i)], isScanned);
-                obj.btnDir(i).Enable = BooleanHelper.boolToOnOff(isScanned);
-                MainGuiStyle.setFieldEnabled(obj.edtCentre(i), true);
+                % Not scanned: greyed, but still editable
+                MainGuiStyle.setFieldMuted([obj.edtFrom(i), obj.edtTo(i), obj.edtNumPoints(i), obj.edtStep(i)], ~isScanned);
+                set(obj.btnDir(i), 'ForegroundColor', BooleanHelper.ifTrueElse(isScanned, C.ink, C.ink3));
             end
 
             % Summary line, with the shortest it can take (pixel time only)
@@ -309,6 +322,13 @@ classdef ViewStagePanelScanParams < GuiComponent & EventListener & EventSender
     end
 
     methods (Access = private)
+        function gapColumn(~, grid, n)
+            % An empty column: the space between two groups
+            for i = 1:n + 1
+                MainGuiStyle.empty(grid);
+            end
+        end
+
         function edits = column(obj, grid, title, n, tooltip) %#ok<INUSL>
             MainGuiStyle.header(grid, title);
             edits = gobjects(1, n);

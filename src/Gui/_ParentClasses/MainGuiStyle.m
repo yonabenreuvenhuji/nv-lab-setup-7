@@ -163,6 +163,29 @@ classdef MainGuiStyle
                 'BackgroundColor', MainGuiStyle.col().panel);
         end
 
+        function row = groupTitles(parent, colWidths, spacing, groups, titles)
+            % A row of titles, each over a group of a grid's columns, with a rule under it.
+            % groups{g} = [first last] column of group g.
+            C = MainGuiStyle.col();
+            starts = [0, cumsum(colWidths + spacing)];
+            row = MainGuiStyle.hbox(parent, 0);
+            widths = [];
+            x = 0;
+            for g = 1:numel(groups)
+                c = groups{g};
+                MainGuiStyle.empty(row);
+                widths(end + 1) = starts(c(1)) - x; %#ok<AGROW>
+                box = MainGuiStyle.vbox(row, 1);
+                MainGuiStyle.header(box, titles{g}, 'center', 'ForegroundColor', C.ink2);
+                uicontrol('Parent', box, 'Style', 'text', 'String', '', 'BackgroundColor', C.line);
+                box.Heights = [14 1];
+                widths(end + 1) = starts(c(end)) + colWidths(c(end)) - starts(c(1)); %#ok<AGROW>
+                x = starts(c(end)) + colWidths(c(end));
+            end
+            MainGuiStyle.empty(row);
+            row.Widths = [widths, -1];
+        end
+
         function e = empty(parent)
             e = uix.Empty('Parent', parent);
             try; e.BackgroundColor = MainGuiStyle.col().panel; catch; end
@@ -316,6 +339,20 @@ classdef MainGuiStyle
                     set(h(k), 'Enable', 'on', 'BackgroundColor', C.field, 'ForegroundColor', C.ink);
                 else
                     set(h(k), 'Enable', 'off', 'BackgroundColor', C.off, 'ForegroundColor', C.ink3);
+                end
+            end
+        end
+
+        function setFieldMuted(h, tf)
+            % Grey a field that does not apply right now, but KEEP IT EDITABLE (so it can be
+            % set up in advance). setFieldEnabled is the one that also blocks typing.
+            C = MainGuiStyle.col();
+            for k = 1:numel(h)
+                set(h(k), 'Enable', 'on');
+                if tf
+                    set(h(k), 'BackgroundColor', C.off, 'ForegroundColor', C.ink3);
+                else
+                    set(h(k), 'BackgroundColor', C.field, 'ForegroundColor', C.ink);
                 end
             end
         end

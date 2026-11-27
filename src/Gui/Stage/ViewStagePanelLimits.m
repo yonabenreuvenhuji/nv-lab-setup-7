@@ -1,25 +1,28 @@
 classdef ViewStagePanelLimits < GuiComponent & EventListener
     %VIEWSTAGEPANELLIMITS The "Soft limits" section: how far the stage may move.
     %
-    %   Axis  Lower (µm)  Upper (µm)   Hard range (µm)
-    %    X    [ -6500 ]   [ 6500  ]    -6500 … 6500
-    %   Set [x] lower [x] upper  of  [x] X [x] Y [x] Z  to:
-    %   [Hard limits]  [Stage position]  [Stage position ± [10] µm]
+    %          Lower (µm)        Upper (µm)        Hard range (µm)     Set both limits
+    %   X   [ -6500 ] [Here]   [ 6500 ] [Here]    -6500 … 6500       [Full] [± 10 µm]
+    %   Y   ...
+    %   ± distance [ 10 ] µm      Here = where the stage is now
     %
-    % Typing a limit sets it at once. The buttons set the ticked limits of the ticked axes.
+    %   typing a limit   sets it
+    %   Here             sets that one limit to the stage's position now
+    %   Full             both limits = the hard range (the whole travel of the axis)
+    %   ± d              lower = stage − d, upper = stage + d
+    % (They replace "Set [lower][upper] of [X][Y][Z] to: Hard limits / Stage position /
+    % Stage position ±", which needed boxes ticked before a button did anything.)
     % Moving a limit past the stage position asks first, because the stage will move.
 
     properties
-        edtLower            % 1xN edit-text
-        edtUpper            % 1xN edit-text
+        edtLower            % 1xN edit
+        edtUpper            % 1xN edit
+        btnLowerHere        % 1xN
+        btnUpperHere        % 1xN
         tvHard              % 1xN text
-        cbxAxis             % 1xN checkbox
-        cbxUpperLim         % checkbox
-        cbxLowerLim         % checkbox
-        btnSetToMax         % button
-        btnSetToCurPos      % button
-        btnSetToAround      % button
-        edtSetAround        % edit-text
+        btnFull             % 1xN
+        btnAround           % 1xN
+        edtSetAround        % edit: the ± distance
 
         stageName           % string
         stageAxes           % string. example: "xy"
@@ -29,6 +32,8 @@ classdef ViewStagePanelLimits < GuiComponent & EventListener
         SET_AROUND_DEFAULT_STRING = '10';
         LIM_LOWER = 0;
         LIM_UPPER = 1;
+        % axis | lower | here | gap | upper | here | gap | hard | gap | full | ±
+        COL_WIDTHS = [20 70 46 8 70 46 8 104 8 46 70]
     end
 
     methods
@@ -40,74 +45,83 @@ classdef ViewStagePanelLimits < GuiComponent & EventListener
             n = length(obj.stageAxes);
             S = MainGuiStyle;
             um = MainGuiStyle.micron;
+            sp = 4;
+            W = obj.COL_WIDTHS;
 
             [panel, inner] = MainGuiStyle.section(parent.component, 'Soft limits');
             obj.component = panel;
 
+            MainGuiStyle.groupTitles(inner, W, sp, {[2 3], [5 6], 8, [10 11]}, ...
+                {sprintf('Lower (%s)', um), sprintf('Upper (%s)', um), sprintf('Hard range (%s)', um), 'Set both limits'});
+
             gridRow = MainGuiStyle.hbox(inner, 0);
-            grid = MainGuiStyle.grid(gridRow, 4);
+            grid = MainGuiStyle.grid(gridRow, sp);
             MainGuiStyle.empty(gridRow);
-            MainGuiStyle.empty(grid);
+            obj.edtLower = gobjects(1, n); obj.edtUpper = gobjects(1, n);
+            obj.btnLowerHere = gobjects(1, n); obj.btnUpperHere = gobjects(1, n);
+            obj.tvHard = gobjects(1, n); obj.btnFull = gobjects(1, n); obj.btnAround = gobjects(1, n);
+            % (a uix.Grid fills column by column)
             for i = 1:n; MainGuiStyle.axisTag(grid, obj.stageAxes(i)); end
-            MainGuiStyle.header(grid, sprintf('Lower (%s)', um));
-            obj.edtLower = gobjects(1, n);
             for i = 1:n
-                obj.edtLower(i) = MainGuiStyle.edit(grid, '', 'TooltipString', 'Lowest position the stage may go to');
+                obj.edtLower(i) = MainGuiStyle.edit(grid, '', 'TooltipString', ...
+                    sprintf('Lowest position %s may go to. Type to set it.', upper(obj.stageAxes(i))));
             end
-            MainGuiStyle.header(grid, sprintf('Upper (%s)', um));
-            obj.edtUpper = gobjects(1, n);
             for i = 1:n
-                obj.edtUpper(i) = MainGuiStyle.edit(grid, '', 'TooltipString', 'Highest position the stage may go to');
+                obj.btnLowerHere(i) = MainGuiStyle.button(grid, 'Here', 'quiet', 'TooltipString', ...
+                    sprintf('%s lower limit = where the stage is now', upper(obj.stageAxes(i))));
             end
-            MainGuiStyle.header(grid, sprintf('Hard range (%s)', um), 'left');
-            obj.tvHard = gobjects(1, n);
+            for i = 1:n; MainGuiStyle.empty(grid); end
+            for i = 1:n
+                obj.edtUpper(i) = MainGuiStyle.edit(grid, '', 'TooltipString', ...
+                    sprintf('Highest position %s may go to. Type to set it.', upper(obj.stageAxes(i))));
+            end
+            for i = 1:n
+                obj.btnUpperHere(i) = MainGuiStyle.button(grid, 'Here', 'quiet', 'TooltipString', ...
+                    sprintf('%s upper limit = where the stage is now', upper(obj.stageAxes(i))));
+            end
+            for i = 1:n; MainGuiStyle.empty(grid); end
             for i = 1:n
                 phAxis = ClassStage.getAxis(obj.stageAxes(i));
                 [hardNeg, hardPos] = stage.ReturnHardLimits(phAxis);
                 obj.tvHard(i) = MainGuiStyle.hint(grid, sprintf('%s %s %s', MainGuiStyle.num(hardNeg), char(8230), ...
-                    MainGuiStyle.num(hardPos)), 'left', 'TooltipString', 'The physical range of the axis');
+                    MainGuiStyle.num(hardPos)), 'center', 'TooltipString', 'The whole travel of the axis');
             end
-            widths = [20 76 76 130];
-            set(grid, 'Widths', widths, 'Heights', [S.HEAD_H, S.ROW_H * ones(1, n)]);
-            gridRow.Widths = [sum(widths) + 4*numel(widths), -1];
-
-            %%%% which limits %%%%
-            pick = MainGuiStyle.hbox(inner, 6);
-            MainGuiStyle.label(pick, 'Set', 'left');
-            obj.cbxLowerLim = MainGuiStyle.checkbox(pick, 'lower', false);
-            obj.cbxUpperLim = MainGuiStyle.checkbox(pick, 'upper', false);
-            MainGuiStyle.label(pick, 'of', 'center');
-            obj.cbxAxis = gobjects(1, n);
+            for i = 1:n; MainGuiStyle.empty(grid); end
             for i = 1:n
-                obj.cbxAxis(i) = MainGuiStyle.checkbox(pick, upper(obj.stageAxes(i)), false);
+                obj.btnFull(i) = MainGuiStyle.button(grid, 'Full', 'normal', 'TooltipString', ...
+                    sprintf('%s: both limits = the hard range (the whole travel)', upper(obj.stageAxes(i))));
             end
-            MainGuiStyle.label(pick, 'to:', 'left');
-            pick.Widths = [26 56 58 18 40*ones(1, n) -1];
+            for i = 1:n
+                obj.btnAround(i) = MainGuiStyle.button(grid, '', 'normal');
+            end
+            set(grid, 'Widths', W, 'Heights', S.ROW_H * ones(1, n));
+            gridRow.Widths = [sum(W) + sp*numel(W), -1];
 
-            buttons = MainGuiStyle.hbox(inner, 6);
-            obj.btnSetToMax = MainGuiStyle.button(buttons, 'Hard limits', 'normal', ...
-                'TooltipString', 'The whole physical range');
-            obj.btnSetToCurPos = MainGuiStyle.button(buttons, 'Stage position', 'normal', ...
-                'TooltipString', 'Where the stage is now');
-            obj.btnSetToAround = MainGuiStyle.button(buttons, sprintf('Stage position %s', char(177)), 'normal', ...
-                'TooltipString', 'Where the stage is now, minus (lower) or plus (upper) the distance on the right');
-            obj.edtSetAround = MainGuiStyle.edit(buttons, obj.SET_AROUND_DEFAULT_STRING);
-            MainGuiStyle.label(buttons, um, 'left');
-            buttons.Widths = [-1 -1 -1.1 56 24];
+            % The distance for the ± buttons
+            bottom = MainGuiStyle.hbox(inner, 6);
+            MainGuiStyle.label(bottom, sprintf('%s distance', char(177)), 'left');
+            obj.edtSetAround = MainGuiStyle.edit(bottom, obj.SET_AROUND_DEFAULT_STRING, ...
+                'TooltipString', sprintf('How far below and above the stage position the %s buttons put the limits', char(177)));
+            MainGuiStyle.label(bottom, um, 'left');
+            MainGuiStyle.hint(bottom, 'Here = where the stage is now', 'right');
+            bottom.Widths = [62 56 24 -1];
 
-            inner.Heights = [S.HEAD_H + n*S.ROW_H + 4*n, S.ROW_H, S.ROW_H];
+            inner.Heights = [15, n*S.ROW_H + sp*(n-1), S.ROW_H];
             obj.height = MainGuiStyle.sectionHeight(MainGuiStyle.rowsHeight(inner.Heights));
-            obj.width = 520;
+            obj.width = sum(W) + sp*numel(W) + 20;
 
             for i = 1 : n
                 obj.edtLower(i).Callback = @(h,e) obj.edtLowerLimitCallback(i);
                 obj.edtUpper(i).Callback = @(h,e) obj.edtUpperLimitCallback(i);
+                obj.btnLowerHere(i).Callback = @(h,e) obj.setHere(i, obj.LIM_LOWER);
+                obj.btnUpperHere(i).Callback = @(h,e) obj.setHere(i, obj.LIM_UPPER);
+                obj.btnFull(i).Callback = @(h,e) obj.setFull(i);
+                obj.btnAround(i).Callback = @(h,e) obj.setAround(i);
             end
-            obj.btnSetToAround.Callback = @(h,e) obj.btnSetToAroundCallback;
-            obj.btnSetToCurPos.Callback = @(h,e) obj.btnSetToCurPosCallback;
-            obj.btnSetToMax.Callback = @(h,e) obj.btnSetToMaxCallback;
+            obj.edtSetAround.Callback = @(h,e) obj.edtSetAroundCallback();
 
             obj.refresh();
+            obj.labelAroundButtons();
         end
 
         function refresh(obj)
@@ -154,55 +168,64 @@ classdef ViewStagePanelLimits < GuiComponent & EventListener
             stage.setLim(value, phAxis, which);     % if it succeeds, an event refreshes us
         end
 
-        function btnSetToAroundCallback(obj)
+        function setHere(obj, index, which)
+            % One limit of one axis = the stage position now
             stage = getObjByName(obj.stageName);
-            if isempty(stage); throwBaseObjException(obj.stageName); end
-            around = obj.edtSetAround.String;
-            if ~ValidationHelper.isValueNonNegative(around)
+            phAxis = ClassStage.getAxis(obj.stageAxes(index));
+            stage.setLim(stage.Pos(phAxis), phAxis, which);
+        end
+
+        function setFull(obj, index)
+            % Both limits = the hard range. (Upper first when widening, so the lower limit
+            % never has to pass the upper one.)
+            stage = getObjByName(obj.stageName);
+            phAxis = ClassStage.getAxis(obj.stageAxes(index));
+            [hardNeg, hardPos] = stage.ReturnHardLimits(phAxis);
+            stage.setLim(hardPos, phAxis, obj.LIM_UPPER);
+            stage.setLim(hardNeg, phAxis, obj.LIM_LOWER);
+        end
+
+        function setAround(obj, index)
+            % lower = stage − d, upper = stage + d (clipped to the hard range)
+            stage = getObjByName(obj.stageName);
+            phAxis = ClassStage.getAxis(obj.stageAxes(index));
+            d = obj.aroundDistance();
+            pos = stage.Pos(phAxis);
+            [hardNeg, hardPos] = stage.ReturnHardLimits(phAxis);
+            lower = max(pos - d, hardNeg);
+            upper = min(pos + d, hardPos);
+            [limNeg, ~] = stage.ReturnLimits(phAxis);
+            if upper >= limNeg      % (order so the lower limit never passes the upper one)
+                stage.setLim(upper, phAxis, obj.LIM_UPPER);
+                stage.setLim(lower, phAxis, obj.LIM_LOWER);
+            else
+                stage.setLim(lower, phAxis, obj.LIM_LOWER);
+                stage.setLim(upper, phAxis, obj.LIM_UPPER);
+            end
+        end
+
+        function edtSetAroundCallback(obj)
+            if ~ValidationHelper.isValueNonNegative(obj.edtSetAround.String)
                 obj.edtSetAround.String = obj.SET_AROUND_DEFAULT_STRING;
                 EventStation.anonymousWarning('The distance must be a non-negative number! Reverting.');
-                return
             end
-            around = str2double(around);
-            obj.setTicked(@(phAxis, which) stage.Pos(phAxis) + BooleanHelper.ifTrueElse(which == obj.LIM_LOWER, -around, around));
-        end
-
-        function btnSetToCurPosCallback(obj)
-            stage = getObjByName(obj.stageName);
-            if isempty(stage); throwBaseObjException(obj.stageName); end
-            obj.setTicked(@(phAxis, which) stage.Pos(phAxis));
-        end
-
-        function btnSetToMaxCallback(obj)
-            stage = getObjByName(obj.stageName);
-            if isempty(stage); throwBaseObjException(obj.stageName); end
-            obj.setTicked(@(phAxis, which) obj.hardLimit(stage, phAxis, which));
+            obj.labelAroundButtons();
         end
     end
 
     methods (Access = private)
-        function setTicked(obj, valueFcn)
-            % Set the ticked limits (lower/upper) of the ticked axes to valueFcn(axis, which)
-            stage = getObjByName(obj.stageName);
-            if ~any([obj.cbxAxis.Value]) || ~(obj.cbxLowerLim.Value || obj.cbxUpperLim.Value)
-                EventStation.anonymousWarning('Tick which limits (lower / upper) and which axes to set first.');
-                return
-            end
-            for i = 1 : length(obj.stageAxes)
-                if ~obj.cbxAxis(i).Value; continue; end
-                phAxis = ClassStage.getAxis(obj.stageAxes(i));
-                if obj.cbxLowerLim.Value
-                    stage.setLim(valueFcn(phAxis, obj.LIM_LOWER), phAxis, obj.LIM_LOWER);
-                end
-                if obj.cbxUpperLim.Value
-                    stage.setLim(valueFcn(phAxis, obj.LIM_UPPER), phAxis, obj.LIM_UPPER);
-                end
-            end
+        function d = aroundDistance(obj)
+            d = str2double(obj.edtSetAround.String);
+            if ~isfinite(d) || d < 0; d = str2double(obj.SET_AROUND_DEFAULT_STRING); end
         end
 
-        function v = hardLimit(obj, stage, phAxis, which)
-            [hardNeg, hardPos] = stage.ReturnHardLimits(phAxis);
-            v = BooleanHelper.ifTrueElse(which == obj.LIM_LOWER, hardNeg, hardPos);
+        function labelAroundButtons(obj)
+            d = MainGuiStyle.num(obj.aroundDistance());
+            for i = 1:numel(obj.btnAround)
+                set(obj.btnAround(i), 'String', sprintf('%s %s', char(177), d), 'TooltipString', ...
+                    sprintf('%s: lower = stage %s %s, upper = stage + %s %s', upper(obj.stageAxes(i)), ...
+                    char(8722), d, d, MainGuiStyle.micron));
+            end
         end
     end
 
