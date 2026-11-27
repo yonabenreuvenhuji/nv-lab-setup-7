@@ -692,9 +692,41 @@ function e = compareExpected(e, G, rel, fwhm)
     fprintf('  slope: straight-line fit %.4f MHz/G, expected %.4f MHz/G\n', e.slopeFit, e.slopeExpected);
     if isfinite(fwhm)
         fprintf('  (the lines are %.1f MHz wide, median FWHM)\n', fwhm);
-        if e.rms < 0.15*fwhm && abs(e.mean) < 0.15*fwhm
-            fprintf(['  -> they agree to a small fraction of a linewidth: the ESR at each point is\n' ...
-                     '     only confirming what the coil calibration already predicts.\n']);
+    end
+    % ABSOLUTE criteria. A threshold scaled to the linewidth said "agree" for an rms of
+    % 1.6 MHz and a 15% slope mismatch on 20 MHz lines -- it measured how broad the lines
+    % were, not how well the prediction did.
+    e.agree = e.rms <= 0.5 && abs(e.mean) <= 0.5 && ...
+              (~isfinite(e.slopeFit) || abs(e.slopeFit/e.slopeExpected - 1) <= 0.03);
+    if e.agree
+        fprintf(['  -> they agree within 0.5 MHz and 3%% in slope: the ESR at each point is only\n' ...
+                 '     confirming what the coil calibration already predicts.\n']);
+    else
+        fprintf(['  -> they do NOT agree within 0.5 MHz / 3%% in slope. Before blaming the coil\n' ...
+                 '     calibration, check the field each coarse ESR measured on its own (below):\n' ...
+                 '     one line fitted near the resonator''s own dip is pulled by it, while |B|\n' ...
+                 '     from the whole spectrum also uses the upper lines, far from the resonator.\n']);
+        [~, ord] = sort(abs(e.resid), 'descend');
+        for k = ord(1:min(4, numel(ord)))
+            fprintf('       Brho %6.2f G: measured %8.2f, expected %8.2f MHz (%+.2f)\n', ...
+                    rho(k), e.fMeasured(k), e.fExpected(k), e.resid(k));
+        end
+    end
+    % THE INDEPENDENT CHECK: coarse points solved |B| from their whole wide spectrum
+    % (esrFieldSolve) -- both aligned lines and the off-axis group, so D drops out and most of
+    % the lines are nowhere near the resonator. |B| - Brho is the coil calibration's error.
+    if isfield(G, 'B')
+        Bs = [G.B]; k = isfinite(Bs);
+        if any(k)
+            e.BsolveRho = rho(k); e.Bsolve = Bs(k); e.BsolveMinusRho = Bs(k) - rho(k);
+            fprintf('\n  |B| each coarse ESR solved from its whole spectrum, against Brho set:\n');
+            fprintf('     %8s %9s %9s\n', 'Brho/G', '|B|/G', 'diff/G');
+            for j = find(k)
+                fprintf('     %8.2f %9.3f %+9.3f\n', rho(j), Bs(j), Bs(j) - rho(j));
+            end
+            fprintf(['     mean %+.3f G, rms %.3f G. Within ~0.3 G everywhere = the coil calibration\n' ...
+                     '     is right, and the line scatter above is the ESR fit, not the coils.\n'], ...
+                    mean(e.BsolveMinusRho), sqrt(mean(e.BsolveMinusRho.^2)));
         end
     end
 end
