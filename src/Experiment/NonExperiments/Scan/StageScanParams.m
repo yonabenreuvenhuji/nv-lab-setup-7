@@ -32,6 +32,29 @@ classdef StageScanParams < handle
         % Should be a cell array of vectors of length 5 [x1, x2, y1, y2, z].
         % Each cell is a block from (x1, y1) to (x2, y2), scanned at "z".
         scanBlocks = {}; % empty means that it is a normal scan.
+
+        % ---- how the scan runs (main window, "Scan" section) ----
+        % scanOrder: the scanned axes in the order they move. The first runs along each
+        % line, the second steps between lines, the third (3D) steps between slices.
+        % E.g. 'yxz' = lines along y, stepping x, one xy slice per z. Letters of axes that
+        % are not scanned are ignored. '' = automatic (lines along the first scanned axis,
+        % unless the stage's maximum line length makes the other way shorter).
+        scanOrder = ''
+        % zigzag: true = every other line runs backwards (serpentine, no return trip).
+        % false = every line runs in the same direction (immune to backlash). Only for
+        % stages that can do both (they have a scanBidirectional property).
+        zigzag = false
+        % reverse(i): true = axis i is scanned from "to" towards "from". The image is
+        % always stored and shown with the axis in its from -> to order.
+        reverse = [false false false]
+        % returnToStart: when the scan ends (or is stopped), move the stage back to where it
+        % was when the scan started. Not after Halt.
+        returnToStart = true
+    end
+
+    properties (Constant, Hidden)
+        % Added after files were already saved without them: load silently with defaults.
+        LATER_FIELDS = {'scanOrder', 'zigzag', 'reverse', 'returnToStart', 'scanBlocks'};
     end
     
     methods
@@ -165,6 +188,76 @@ classdef StageScanParams < handle
         end
     end
     
+    % scan order, direction
+    methods
+        function n = nDims(obj)
+            % Number of scanned axes (0-3)
+            n = sum(~obj.isFixed);
+        end
+
+        function order = orderedScanAxes(obj)
+            % Indices of the scanned axes, in scanOrder (line axis first). Axes scanOrder
+            % does not name follow in xyz order. Empty scanOrder = xyz order.
+            scanned = find(~obj.isFixed);
+            order = [];
+            if ischar(obj.scanOrder)
+                for letter = lower(obj.scanOrder)
+                    k = strfind(ClassStage.SCAN_AXES, letter);
+                    if ~isempty(k) && any(scanned == k) && ~any(order == k)
+                        order(end + 1) = k; %#ok<AGROW>
+                    end
+                end
+            end
+            order = [order, setdiff(scanned, order, 'stable')];
+        end
+
+        function tf = isOrderAutomatic(obj)
+            tf = isempty(obj.scanOrder);
+        end
+
+        function v = getScanAxisVectorInScanOrder(obj, axisIndex)
+            % The points of an axis in the order they are visited (to -> from if reversed).
+            v = obj.getScanAxisVector(axisIndex);
+            if ~obj.isFixed(axisIndex) && numel(obj.reverse) >= axisIndex && obj.reverse(axisIndex)
+                v = fliplr(v);
+            end
+        end
+
+        function s = describe(obj, maxLineLength)
+            % One line saying what the scan will do, for the GUI:
+            % '2D · lines along X, stepping Y · 51 × 41 = 2,091 pixels'
+            if nargin < 2; maxLineLength = inf; end
+            order = obj.orderedScanAxes;
+            L = upper(ClassStage.SCAN_AXES);
+            n = obj.numPoints(order);
+            switch numel(order)
+                case 0
+                    s = 'Nothing to scan: tick Scan for at least one axis.';
+                    return
+                case 1
+                    s = sprintf('1D along %s', L(order));
+                case 2
+                    if obj.isOrderAutomatic && maxLineLength < max(n)
+                        s = sprintf('2D %s%s (line axis: automatic)', L(sort(order)));
+                    else
+                        s = sprintf('2D · lines along %s, stepping %s', L(order(1)), L(order(2)));
+                    end
+                case 3
+                    s = sprintf('3D · lines along %s, stepping %s, slices along %s', L(order(1)), L(order(2)), L(order(3)));
+            end
+            total = prod(n) * (1 + logical(obj.isMWContrastScan));
+            s = sprintf('%s · %s = %s pixels', s, strjoin(arrayfun(@num2str, n, 'UniformOutput', false), ' × '), ...
+                StageScanParams.thousands(total));
+        end
+    end
+
+    methods (Static)
+        function s = thousands(n)
+            s = sprintf('%d', round(n));
+            s = regexprep(s, '(\d)(?=(\d{3})+$)', '$1,');
+        end
+    end
+
     % getters
     methods
         function string = getScanAxes(obj)
@@ -289,11 +382,22 @@ classdef StageScanParams < handle
             for fieldIndex = 1 : length(neededFields)
                 fieldName = neededFields{fieldIndex};
                 if isfield(inputStruct, fieldName)
-                    obj.(fieldName) = inputStruct.(fieldName)';
-                else
-                    warning('Couldn''t find field "%s" in struct. Using default value.', fieldName, obj.(fieldName));
+                    value = inputStruct.(fieldName);
+                    if ischar(value)
+                        obj.(fieldName) = value(:)';    % a string stays a row (transposing made 'xyz' a column)
+                    elseif isempty(value) && iscell(obj.(fieldName))
+                        obj.(fieldName) = {};           % jsondecode turns {} into []
+                    else
+                        obj.(fieldName) = value';
+                    end
+                elseif ~any(strcmp(fieldName, StageScanParams.LATER_FIELDS))
+                    warning('Couldn''t find field "%s" in struct. Using default value.', fieldName);
                 end
             end
+            obj.reverse = logical(obj.reverse(:)');
+            obj.zigzag = logical(obj.zigzag);
+            obj.returnToStart = logical(obj.returnToStart);
+            if isempty(obj.scanOrder) || isnumeric(obj.scanOrder); obj.scanOrder = ''; end
         end
     end
 end

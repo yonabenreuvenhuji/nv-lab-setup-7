@@ -1,35 +1,24 @@
 classdef ViewLasersContainer < ViewVBox
-    % ViewLasersContainer is a container for laser views
-    %   for each laser physics in the setup, create a GUI component called
-    %   "LaserView" to handle that laser.
-    
-    properties
-    end
-    
+    % ViewLasersContainer One ViewLaser section per laser of the setup, stacked.
+
     methods
-        % constructor
         function obj = ViewLasersContainer(parent, controller)
-            obj@ViewVBox(parent, controller);
-            
+            obj@ViewVBox(parent, controller, 0, MainGuiStyle.GAP);
+            obj.component.BackgroundColor = MainGuiStyle.col().window;
+
             lasers = LaserGate.getLasers();
             heights = [];
             width = 0;
-            
             for i = 1 : length(lasers)
-                laserGate = lasers{i};
-                viewLaser = ViewLaser(obj, controller, laserGate);
-                width = viewLaser.width;
+                viewLaser = ViewLaser(obj, controller, lasers{i});
+                width = max(width, viewLaser.width);
                 heights(i) = viewLaser.height; %#ok<AGROW>
             end
-            
             if ~isempty(heights)
                 set(obj.component, 'Heights', heights);
-                set(obj.component, 'Spacing', 5);
             end
-            
-            
-            obj.height = sum(heights) + length(heights) * 3;
+            obj.height = MainGuiStyle.rowsHeight(heights);
             obj.width = width;
         end
-    end 
+    end
 end

@@ -1,114 +1,91 @@
 classdef ViewGeneralControl < GuiComponent & EventListener
-    
+    %VIEWGENERALCONTROL The "Supplies" section of the Helmholtz window:
+    %
+    %   Supplies
+    %   Control [ ON ][ AUTO ][ OFF ]    ( OUTPUT OFF )    [ ] Flip direction
+    %
+    %   ON    the supplies' output is on
+    %   AUTO  on only while an experiment runs
+    %   OFF   off
+    % The pill shows whether the output is on right now. Flip direction is greyed out when
+    % the setup has no flip switch (flip_direction.available in setupInfo.json).
+
     properties (Constant)
         CONTROL_STATE = {'ON', 'AUTO', 'OFF'};
+        TIPS = {'Supplies on', 'On only while an experiment runs', 'Supplies off'};
     end
-    
+
     properties
-        cbxOutputOn     % checkbox
+        btnState        % 1x3 toggle buttons, in the order of CONTROL_STATE
+        dspOutput       % output indicator
         cbxFlipDir      % checkbox
-        
-        chsControlState
-        chsOn
-        chsAuto
-        chsOff
-        dspOutput
-        
         helm
     end
 
     methods
         function obj = ViewGeneralControl(parent, controller)
             expNames = Experiment.getExperimentNames();
-            namesToListenTo = {expNames{:}, Helmholtz.NAME}; %#ok<CCAT>
-            
+            namesToListenTo = [expNames(:)', {Helmholtz.NAME}];
+
             obj@GuiComponent(parent, controller);
             obj@EventListener(namesToListenTo);
             obj.helm = getObjByName('Helmholtz');
-            
-            %%%% panel init %%%%
-            panelMain = uix.Panel('Parent', parent.component, 'Title', 'General Control', 'Padding', 5);
-            hboxMain = uix.HBox('Parent', panelMain, 'Spacing', 25, 'Padding', 0);
-            
-            %%% left check boxes %%%
-            obj.chsControlState = uibuttongroup(...
-                'Parent', hboxMain, ...
-                'Title', 'Control State', ...
-                'SelectionChangedFcn', @obj.callbackControlStateSelection);
-            chsHeight = 15;
-            chsWidth = 70;
-            paddingFromLeft = 10;
-            obj.chsOn = uicontrol(obj.PROP_RADIO{:}, 'Parent', obj.chsControlState, ...
-                'String', obj.CONTROL_STATE{1}, ...
-                'Position', [paddingFromLeft 45 chsWidth chsHeight], ...  
-                'Tag', obj.CONTROL_STATE{1});
-            obj.chsAuto = uicontrol(obj.PROP_RADIO{:}, 'Parent', obj.chsControlState, ...
-                'String', obj.CONTROL_STATE{2}, ...
-                'Position', [paddingFromLeft 25 chsWidth chsHeight], ...  
-                'Tag', obj.CONTROL_STATE{2});
-            obj.chsOff = uicontrol(obj.PROP_RADIO{:}, 'Parent', obj.chsControlState, ...
-                'String', obj.CONTROL_STATE{3}, ...
-                'Position', [paddingFromLeft 5 chsWidth chsHeight], ...  
-                'Tag', obj.CONTROL_STATE{3});
-            vboxLeftHeightTotal = 3*(chsHeight+10) +35;
-            leftSideTotalWidth = 100;
+            S = MainGuiStyle;
 
-            %%% center output state display %%%
-            vboxCenter = uix.VBox('Parent',hboxMain, 'Spacing', 6);
-            uicontrol(obj.PROP_LABEL{:}, 'Parent', vboxCenter, 'String', 'OUTPUT:');
-            obj.dspOutput = uicontrol(obj.PROP_ON_OFF_DISP{:}, 'Parent', vboxCenter, 'String', 'OFF');
-            vboxCenter.Heights = [-1, 70];
-            vboxCenterWidth = 70;
-            
-            %%% empty box %%%
-            vboxSpace = uix.VBox('Parent',hboxMain, 'Spacing', 6);
-            
-            %%% right side %%%
-            % (the "B -> NV" button that was here is gone: the "Align B" panel does that and
-            % more -- any NV axis or cube axis, at a |B| or dip position you choose)
-            vboxRight = uix.VBox('Parent',hboxMain, 'Spacing', 6);
-            uix.Empty('Parent', vboxRight);
-            obj.cbxFlipDir = uicontrol(obj.PROP_CHECKBOX{:}, 'Parent', vboxRight, 'String', 'Flip Direction', 'FontSize', 10, 'FontWeight', 'bold');
-            checkBoxH = 35;
-            vboxRight.Heights = [-1, checkBoxH];
-            rightSidewidth = 120;
+            [panel, inner] = MainGuiStyle.section(parent.component, 'Supplies');
+            obj.component = panel;
+            row = MainGuiStyle.hbox(inner, 6);
+            MainGuiStyle.label(row, 'Control', 'left');
+            obj.btnState = gobjects(1, 3);
+            for k = 1:3
+                obj.btnState(k) = MainGuiStyle.toggle(row, obj.CONTROL_STATE{k}, ...
+                    'TooltipString', obj.TIPS{k}, 'FontWeight', 'bold', ...
+                    'Callback', @(h,e) obj.setControlState(k));
+            end
+            MainGuiStyle.empty(row);
+            obj.dspOutput = uicontrol('Parent', row, 'Style', 'edit', 'Enable', 'inactive', 'String', 'OUTPUT OFF', ...
+                'FontSize', S.FONT + 1, 'FontWeight', 'bold', 'ForegroundColor', [1 1 1], ...
+                'HorizontalAlignment', 'center', 'TooltipString', 'Whether the supplies'' output is on now');
+            MainGuiStyle.empty(row);
+            obj.cbxFlipDir = MainGuiStyle.checkbox(row, 'Flip direction', false, ...
+                'Callback', @(h,e) obj.cbxFlipDirCallback());
+            if obj.helm.canFlip
+                obj.cbxFlipDir.TooltipString = 'Reverse the field with the flip switch';
+            else
+                set(obj.cbxFlipDir, 'Enable', 'off', 'TooltipString', ...
+                    'This setup has no flip switch (flip_direction.available is false in setupInfo.json)');
+            end
+            row.Widths = [50 50 58 50 -1 110 -1 110];
+            inner.Heights = S.ROW_H;
 
-            %%%% Set mainHbox widths %%%%
-            widthsRelative = [leftSideTotalWidth, vboxCenterWidth, -1, rightSidewidth];
-            hboxMain.Widths = widthsRelative;
-
-            obj.cbxFlipDir.Callback = @(h,e) obj.cbxFlipDirCallback();
-
-            obj.height = vboxLeftHeightTotal;
-            
+            obj.height = MainGuiStyle.sectionHeight(S.ROW_H);
+            obj.width = 520;
             obj.refresh;
         end
-        
+
         function refresh(obj)
-            switch obj.helm.helmControl
-                case obj.helm.CONTROL_STATE{1}
-                    obj.chsControlState.SelectedObject = obj.chsOn;
-                case obj.helm.CONTROL_STATE{2}
-                    obj.chsControlState.SelectedObject = obj.chsAuto;
-                case obj.helm.CONTROL_STATE{3}
-                    obj.chsControlState.SelectedObject = obj.chsOff;
+            C = MainGuiStyle.col();
+            k = find(strcmp(obj.helm.helmControl, obj.helm.CONTROL_STATE), 1);
+            for j = 1:3
+                if j == k
+                    set(obj.btnState(j), 'Value', 1, 'BackgroundColor', C.accent, 'ForegroundColor', [1 1 1]);
+                else
+                    set(obj.btnState(j), 'Value', 0, 'BackgroundColor', [0.94 0.94 0.94], 'ForegroundColor', C.ink);
+                end
             end
             if obj.helm.helmOn
-                obj.dspOutput.BackgroundColor = 'green';
-                obj.dspOutput.String = 'ON';
+                set(obj.dspOutput, 'String', 'OUTPUT ON', 'BackgroundColor', C.ok);
             else
-                obj.dspOutput.BackgroundColor = 'red';
-                obj.dspOutput.String = 'OFF';
+                set(obj.dspOutput, 'String', 'OUTPUT OFF', 'BackgroundColor', C.stop);
             end
             obj.cbxFlipDir.Value = obj.helm.flip;
         end
-        
-        function callbackControlStateSelection(obj, ~, event) %#ok<INUSL>
-            action = event.NewValue.Tag;
-            index = find(strcmp(action, obj.CONTROL_STATE));
-            obj.helm.control(obj.helm.CONTROL_STATE{index});
+
+        function setControlState(obj, k)
+            obj.helm.control(obj.helm.CONTROL_STATE{k});
+            obj.refresh();     % (also when the state did not change: puts the toggles back)
         end
-        
+
         function cbxFlipDirCallback(obj)
             obj.helm.flipDirection(obj.cbxFlipDir.Value);
         end
@@ -116,8 +93,6 @@ classdef ViewGeneralControl < GuiComponent & EventListener
 
     %% overridden from EventListener
     methods
-        % When events happen, this function jumps.
-        % event is the event sent from the EventSender
         function onEvent(obj, event)
             if event.isError ...
                     || isfield(event.extraInfo, Helmholtz.EVENT_OUTPUT_STATE_CHANGED) ...

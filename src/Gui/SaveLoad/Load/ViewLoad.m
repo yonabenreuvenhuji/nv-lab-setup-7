@@ -29,31 +29,37 @@ classdef ViewLoad < ViewVBox & EventListener
             
             %%%% UI elements init   %%%%
             greyOut = {'Enable', 'off'};
+            S = MainGuiStyle;
+            obj.component.Spacing = S.GAP;
+            obj.component.BackgroundColor = MainGuiStyle.col().panel;
             
-            hboxLoadImageButtonRow = uix.HBox('Parent', obj.component, 'Spacing', 5);
-            obj.btnLoad = uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hboxLoadImageButtonRow, 'string', 'Load...');
-            obj.btnPrev = uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hboxLoadImageButtonRow, 'string', '< Previous', greyOut{:});
-            obj.btnNext = uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hboxLoadImageButtonRow, 'string', 'Next >', greyOut{:});
-            obj.btnLast = uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hboxLoadImageButtonRow, 'string', 'Last >>');
-            obj.btnDelete = uicontrol(obj.PROP_BUTTON{:}, 'Parent', hboxLoadImageButtonRow, 'string', 'Delete', greyOut{:});
-            hboxLoadImageButtonRow.Widths = [-4 -5 -4 -4 -4];
+            % Row 1: load, browse the folder, delete
+            row1 = MainGuiStyle.hbox(obj.component, 4);
+            obj.btnLoad = MainGuiStyle.button(row1, 'Load...', 'normal', 'TooltipString', 'Choose a saved scan to load');
+            obj.btnPrev = MainGuiStyle.button(row1, [char(9664) ' Previous'], 'normal', greyOut{:}, 'TooltipString', 'The file before this one in the folder');
+            obj.btnNext = MainGuiStyle.button(row1, ['Next ' char(9654)], 'normal', greyOut{:}, 'TooltipString', 'The file after this one in the folder');
+            obj.btnLast = MainGuiStyle.button(row1, 'Latest', 'normal', 'TooltipString', 'The newest file in the folder');
+            obj.btnDelete = MainGuiStyle.button(row1, 'Delete', 'quiet', greyOut{:}, 'TooltipString', 'Delete the loaded file (asks first)');
+            row1.Widths = [-1.1 -1.2 -1 -1 -0.9];
             
-            hboxSecondRow = uix.HBox('Parent', obj.component, 'Spacing', 15);
+            % Row 2: which folder
+            row2 = MainGuiStyle.hbox(obj.component, 6);
+            MainGuiStyle.label(row2, 'Browse', 'left');
+            obj.radioLoadAuto = uicontrol('Parent', row2, 'Style', 'radiobutton', 'String', 'Autosave folder', ...
+                'FontSize', S.FONT, 'BackgroundColor', MainGuiStyle.col().panel);
+            obj.radioLoadManual = uicontrol('Parent', row2, 'Style', 'radiobutton', 'String', 'Last folder saved to', ...
+                'FontSize', S.FONT, 'BackgroundColor', MainGuiStyle.col().panel);
+            row2.Widths = [50 -1 -1.2];
             
-            vboxSecondRowFirstCol = uix.VBox('Parent', hboxSecondRow, 'Spacing', 5);
-            loadRadioPanel = uix.Panel('Parent', vboxSecondRowFirstCol, 'Title', 'Load folder', 'Padding', 5);
-            vboxRadioButtons = uix.VBox('Parent', loadRadioPanel, 'Spacing', 5);
-            obj.radioLoadAuto = uicontrol(obj.PROP_RADIO{:}, 'Parent', vboxRadioButtons, 'string', 'Autosave');
-            obj.radioLoadManual = uicontrol(obj.PROP_RADIO{:}, 'Parent', vboxRadioButtons, 'string', 'Last saved');
-            % In order to have scrolling in this box, we use a workaround: we define it as an inactive editbox, and set 'Max'-'Min' > 1
-            obj.tvLoadedInfo = uicontrol(obj.PROP_EDIT_SMALL{:}, 'Parent', hboxSecondRow, 'String', 'Loaded File Info', ...
-                'Enable', 'inactive', 'Min', 0, 'Max', 2);    % These last three name-value pairs SHOULD make it a scrollable textview. Refer to MATLAB doc for more explanations.
-            vboxRadioButtons.Heights = [20 20];
-            hboxSecondRow.Widths = [-38 -70];
+            % Row 3: what is in the loaded file. (An inactive multi-line edit, so it scrolls.)
+            obj.tvLoadedInfo = uicontrol('Parent', obj.component, 'Style', 'edit', 'String', 'No file loaded', ...
+                'Enable', 'inactive', 'Min', 0, 'Max', 2, 'FontSize', S.FONT - 1, ...
+                'HorizontalAlignment', 'left', 'BackgroundColor', MainGuiStyle.col().readonly, ...
+                'ForegroundColor', MainGuiStyle.col().ink2);
             
-            
-            %%%% 3rd row: the "load to system!" buttons (inc. callbacks) %%%%
-            hbox3rdRow = uix.HBox('Parent', obj.component, 'Spacing', 15);
+            % Row 4: apply the loaded file's settings
+            row4 = MainGuiStyle.hbox(obj.component, 4);
+            MainGuiStyle.label(row4, 'Apply its', 'left');
             labels = obj.getDisplayLoadToSystemButtons(saveLoadCategory);
             subCats = obj.getSubCategoriesForLoadToSystemButtons(saveLoadCategory);
             if length(labels) ~= length(subCats)
@@ -62,9 +68,10 @@ classdef ViewLoad < ViewVBox & EventListener
             len = length(labels);
             obj.btnLoadToSystem = gobjects(1, len);
             for i = 1 : len
-                obj.btnLoadToSystem(i) = uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hbox3rdRow, 'string', labels{i}, greyOut{:});
+                obj.btnLoadToSystem(i) = MainGuiStyle.button(row4, labels{i}, 'normal', greyOut{:});
                 obj.btnLoadToSystem(i).Callback = @(h,e) obj.handleButtonLoadToSystem(subCats{i});
             end
+            row4.Widths = [56, -ones(1, len)];
             
             %%%% Ui components set callbacks  %%%%
             set(obj.radioLoadAuto, 'Callback', @(h,e)obj.handleRadioAuto);
@@ -75,12 +82,11 @@ classdef ViewLoad < ViewVBox & EventListener
             set(obj.btnNext, 'Callback', @(h,e)obj.handleButtonNext);
             set(obj.btnLast, 'Callback', @(h,e)obj.handleButtonLast);
             
-            
-            
             %%%% Internal properties set values %%%%
-            obj.height = 200;
-            obj.setHeights([30 100 40]);
-            obj.width = 200;
+            heights = [S.ROW_H, 20, 74, S.ROW_H];
+            obj.setHeights(heights);
+            obj.height = MainGuiStyle.rowsHeight(heights);
+            obj.width = 400;
             
             %%%% Set values from the saveLoad %%%%
             obj.refresh();
@@ -92,9 +98,9 @@ classdef ViewLoad < ViewVBox & EventListener
             % Implement here other buttons for other categories!
             switch category
                 case Savable.CATEGORY_IMAGE
-                    cellOfStrings = {'To Scan Parameters!', 'To Lasers!'};
+                    cellOfStrings = {'scan settings', 'laser settings'};
                 otherwise
-                    cellOfStrings = {'To System!'};
+                    cellOfStrings = {'settings'};
             end
         end
         
@@ -240,7 +246,7 @@ classdef ViewLoad < ViewVBox & EventListener
             
             %%%% handle showing the local loaded struct %%%%
             if isfield(event.extraInfo, SaveLoad.EVENT_DELETE_FILE_SUCCESS)
-                obj.tvLoadedInfo.String = 'Loaded File Info';
+                obj.tvLoadedInfo.String = 'No file loaded';
             elseif isfield(event.extraInfo, SaveLoad.EVENT_LOCAL_STRUCT)
                 localSavedStruct = event.extraInfo.(SaveLoad.EVENT_LOCAL_STRUCT);
                 stringToDisplay = Savable.onlyReadableStrings(localSavedStruct);

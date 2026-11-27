@@ -27,8 +27,12 @@ classdef (Sealed) ClassDummyStage  < ClassStage
     end
     
     properties (Constant)
-        STEP_MINIMUM_SIZE = 1   % double
-        STEP_DEFAULT_SIZE = 20  % double
+        STEP_MINIMUM_SIZE = 0.001   % double
+        STEP_DEFAULT_SIZE = 1       % double
+    end
+
+    properties
+        scanBidirectional = false   % false: every line in the same direction. true: zigzag
     end
     
     methods (Static, Access = public) % Get instance constructor
@@ -163,7 +167,7 @@ classdef (Sealed) ClassDummyStage  < ClassStage
                 warning('2D Scan is in progress, either call ''ScanNextLine'' to continue or ''AbortScan'' to cancel.');
             end
             Move(obj, ['y' 'z'], [y z]);
-            Move(obj, 'x', x(end));
+            obj.scanLine('x', x, tPixel);
         end
         
         function TriggX(obj, x, y, z, nFlat, nOverRun, tPixel)
@@ -200,7 +204,7 @@ classdef (Sealed) ClassDummyStage  < ClassStage
                 warning('2D Scan is in progress, either call ''ScanNextLine'' to continue or ''AbortScan'' to cancel.');
             end
             Move(obj, ['x' 'z'], [x z]);
-            Move(obj, 'y', y(end));
+            obj.scanLine('y', y, tPixel);
         end
         
         function TriggY(obj, x, y, z, nFlat, nOverRun, tPixel)
@@ -236,7 +240,7 @@ classdef (Sealed) ClassDummyStage  < ClassStage
                 warning('2D Scan is in progress, either call ''ScanNextLine'' to continue or ''AbortScan'' to cancel.');
             end
             Move(obj, ['x' 'y'], [x y]);
-            Move(obj, 'z', z(end));
+            obj.scanLine('z', z, tPixel);
         end
         
         function TriggZ(obj, x, y, z, nFlat, nOverRun, tPixel)
@@ -406,36 +410,46 @@ classdef (Sealed) ClassDummyStage  < ClassStage
             PrepareScanInTwoDimensions(obj, z, y, nFlat, nOverRun, tPixel, 'z', 'y');
         end
         
-        function [done, forwards] = ScanNextLine(obj)
+        function [forwards, done] = ScanNextLine(obj)
             % Scans the next line for the 2D scan, to be used after
             % 'PrepareScanXX'.
-            % done is set to 1 after the last line has been scanned.
-            % No other commands should be used between 'PrepareScanXX' and
-            % until 'ScanNextLine' has returned done, or until 'AbortScan'
-            % has been called.
-            % forwards is set to 1 when the scan is forward and is set to 0
-            % when it's backwards
+            % forwards is 1 when the line ran in the order of the scan
+            % vector and 0 when it ran backwards (the caller flips it).
+            % done is 1 after the last line has been scanned.
+            % (The outputs were the other way round, so StageScanner, which
+            % takes the first one as "forwards", flipped every line but the
+            % last. Same order as the Standa stage now.)
+            % scanBidirectional = false: every line forwards.
+            % scanBidirectional = true: odd lines forwards, even backwards.
             if (obj.macroIndex == -1)
                 obj.sendError('No scan detected.\nFunction can only be called after ''PrepareScanXX!''');
             end
-            
+
             Move(obj, obj.macroNormalScanAxis, obj.macroNormalScanVector(obj.macroIndex));
-            if (mod(obj.macroIndex,2) ~= 0) % Forwards
-                for i=1:obj.macroNumberOfPixels
-                    Move(obj, obj.macroScanAxis, obj.macroScanVector(i));
-%                     pause(obj.macroPixelTime);
-                end
-                forwards = 1;
-            else % Backwards
-                for i=obj.macroNumberOfPixels:-1:1
-                    Move(obj, obj.macroScanAxis, obj.macroScanVector(i));
-%                     pause(obj.macroPixelTime);
-                end
-                forwards = 0;
+            forwards = double(~obj.scanBidirectional || mod(obj.macroIndex, 2) ~= 0);
+            if forwards
+                obj.scanLine(obj.macroScanAxis, obj.macroScanVector, obj.macroPixelTime);
+            else
+                obj.scanLine(obj.macroScanAxis, flip(obj.macroScanVector), obj.macroPixelTime);
             end
-            
+
             done = (obj.macroIndex == obj.macroNormalNumberOfPixels);
             obj.macroIndex = obj.macroIndex+1;
+        end
+
+        function scanLine(obj, scanAxis, scanVector, tPixel)
+            % Visit every pixel of a line; a detector that measures pixel by
+            % pixel (acquireScanPixel) is asked for each one, as the Standa
+            % stage does.
+            spcm = getObjByName(Spcm.NAME);
+            perPixel = ~isempty(spcm) && ismethod(spcm, 'acquireScanPixel');
+            for i = 1:length(scanVector)
+                Move(obj, scanAxis, scanVector(i));
+                if perPixel
+                    spcm.acquireScanPixel(tPixel);
+                end
+                StageScanner.notePixel();
+            end
         end
         
         function PrepareRescanLine(obj)

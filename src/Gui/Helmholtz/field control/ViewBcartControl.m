@@ -7,13 +7,17 @@ classdef ViewBcartControl < GuiComponent & EventListener
 
     properties (Constant)
         AXES = {'Bx', 'By', 'Bz'};
+        TIPS = {'x component of B, in gauss (in the frame named in the title)', ...
+                'y component of B, in gauss (in the frame named in the title)', ...
+                'z component of B, in gauss (in the frame named in the title)'};
     end
 
     properties
         btnMoveLeft         % 1x3 button
         btnMoveRight        % 1x3 button
-        btnMoveToBlue       % button
-        isBlueMovingAvailable   % logical
+        btnMoveToBlue       % button: "Set to target"
+        btnClearTargets     % button
+        isBlueMovingAvailable   % logical: some target is pending
         edtSteps            % edit-text
         tvCurB              % 1x3 text-view for the present field
         edtCurB             % 1x3 edit-input for a new value
@@ -22,6 +26,7 @@ classdef ViewBcartControl < GuiComponent & EventListener
         upperLimLbl         % 1x3
         edtCurBValue        % 1x3: the value typed in edtCurB, inf when none
         panelMain
+        titleText           % the section's title (it names the frame)
         helm
     end
 
@@ -34,82 +39,42 @@ classdef ViewBcartControl < GuiComponent & EventListener
             obj@EventListener(namesToListenTo);
             obj.helm = getObjByName('Helmholtz');
 
-            obj.panelMain = uix.Panel('Parent', parent.component, 'Title', ...
-                'Cartesian (Gauss)', 'Padding', 5);
-            hboxMain = uix.HBox('Parent', obj.panelMain, 'Spacing', 25, 'Padding', 0);
-            vboxLeft = uix.VBox('Parent',hboxMain, 'Spacing', 6);
-
-            hboxStep = uix.HBox('Parent', vboxLeft, 'Spacing', 5);
-            uicontrol(obj.PROP_LABEL{:}, 'Parent', hboxStep, 'String', 'Step:');
-            obj.edtSteps = uicontrol(obj.PROP_EDIT{:}, 'Parent', hboxStep);
-            hboxStep.Widths = [-1 -1];
-            stepHeightNoSpacing = 25;
-
-            gridLeftSide = uix.Grid('Parent', vboxLeft, 'Spacing', 5);
-            for i = 1:3
-                uicontrol(obj.PROP_LABEL{:}, 'Parent', gridLeftSide, 'String', obj.AXES{i});
-            end
-            obj.lowerLimLbl = gobjects(1, 3);
-            for i = 1:3
-                obj.lowerLimLbl(i) = uicontrol(obj.PROP_LIGHT_LABEL{:}, 'Parent', gridLeftSide, ...
-                    'String', '', 'TooltipString', 'lowest value with the other two held');
-            end
-            obj.btnMoveLeft = gobjects(1, 3);
-            for i = 1:3
-                obj.btnMoveLeft(i) = uicontrol(obj.PROP_BUTTON{:}, 'Parent', gridLeftSide, ...
-                    'String', StringHelper.LEFT_ARROW, 'FontSize', 20);
-            end
-            obj.tvCurB = gobjects(1, 3);
-            obj.edtCurB = gobjects(1, 3);
-            obj.hboxCurB = gobjects(1, 3);
+            %%%% layout (shared with the spherical and current sections) %%%%
+            L = HelmholtzAxesLayout.build(parent.component, sprintf('Field, cartesian   %s   %s', char(183), obj.helm.frameName), ...
+                {'Bx (G)', 'By (G)', 'Bz (G)'}, obj.TIPS, 'G', ...
+                'How far − and + move a component (G)');
+            obj.panelMain = L.panel;
+            obj.titleText = L.title;
+            obj.component = L.panel;
+            obj.edtSteps = L.edtSteps;
+            obj.lowerLimLbl = L.lowerLimLbl;
+            obj.upperLimLbl = L.upperLimLbl;
+            obj.btnMoveLeft = L.btnMoveLeft;
+            obj.btnMoveRight = L.btnMoveRight;
+            obj.tvCurB = L.tvCurB;
+            obj.edtCurB = L.edtCurB;
+            obj.hboxCurB = L.hboxCurB;
+            obj.btnMoveToBlue = L.btnMoveToBlue;
+            obj.btnClearTargets = L.btnClearTargets;
+            obj.btnClearTargets.Callback = @(h,e) obj.clearAllTargets();
             obj.edtCurBValue = inf * ones(1, 3);
             for i = 1:3
-                obj.hboxCurB(i) = uix.HBox('Parent', gridLeftSide, 'Padding', 0, 'Spacing', 0);
-                obj.tvCurB(i) = uicontrol(obj.PROP_EDIT{:}, 'Parent', obj.hboxCurB(i));
-                obj.edtCurB(i) = uicontrol(obj.PROP_EDIT{:}, 'Parent', obj.hboxCurB(i), ...
-                    'ForegroundColor', 'blue', 'BackgroundColor', [0.8 0.9 1]);
-                obj.showEdtCurB(i, false);
+                TargetEntry.styleNow(obj.tvCurB(i));
+                set(obj.tvCurB(i), 'TooltipString', obj.TIPS{i});
+                TargetEntry.styleTarget(obj.edtCurB(i));
             end
-            obj.btnMoveRight = gobjects(1, 3);
-            for i = 1: 3
-                obj.btnMoveRight(i) = uicontrol(obj.PROP_BUTTON{:}, 'Parent', gridLeftSide, ...
-                    'String', StringHelper.RIGHT_ARROW, 'FontSize', 20);
-            end
-            obj.upperLimLbl = gobjects(1, 3);
-            for i = 1:3
-                obj.upperLimLbl(i) = uicontrol(obj.PROP_LIGHT_LABEL{:}, 'Parent', gridLeftSide, ...
-                    'String', '', 'TooltipString', 'highest value with the other two held');
-            end
-
-            gridWidths = [55 60 35 70 35 60];
-            heightGridTotalNoSpacing = 90;
-            set(gridLeftSide, 'Widths', -gridWidths, 'Heights', heightGridTotalNoSpacing/3 * ones(1, 3));
-            gridLeftHeightTotal = heightGridTotalNoSpacing + 5 * 3;
-            gridLeftWidthTotal = sum(gridWidths) + 4 * length(gridWidths);
-            vboxLeft.Heights = [stepHeightNoSpacing, heightGridTotalNoSpacing+10];
-            vboxLeftHeightTotal = gridLeftHeightTotal + stepHeightNoSpacing + 42;
-
-            vboxRight = uix.VBox('Parent',hboxMain, 'Spacing', 6);
-            obj.btnMoveToBlue = uicontrol(obj.PROP_BUTTON{:}, 'Parent', vboxRight, ...
-                'String', 'Change To Blue', 'Enable', 'off', ...
-                'TooltipString', 'Set the field to the values in blue (all at once)');
-            vboxRight.Heights = -2;
-            rightSideTotalWidth = 120;
-            widthsMain = [gridLeftWidthTotal, rightSideTotalWidth];
-            hboxMain.Widths = -widthsMain;
 
             obj.edtSteps.Callback = @(h,e) obj.edtStepSizeCallback();
             obj.btnMoveToBlue.Callback = @(h,e) obj.btnMoveToBlueCallback();
             obj.isBlueMovingAvailable = false;
             for i = 1:3
-                obj.tvCurB(i).Callback = @(h,e) obj.tvCurBCallback(i);
                 obj.edtCurB(i).Callback = @(h,e) obj.checkEdtCurBValue(i);
                 obj.btnMoveLeft(i).Callback = @(h,e) obj.btnMoveCallback(i, true);
                 obj.btnMoveRight(i).Callback = @(h,e) obj.btnMoveCallback(i, false);
             end
 
-            obj.width = sum(widthsMain) + (hboxMain.Spacing -3) * length(widthsMain);
-            obj.height = vboxLeftHeightTotal;
+            obj.width = L.width;
+            obj.height = L.height;
             obj.refresh();
         end
 
@@ -122,8 +87,9 @@ classdef ViewBcartControl < GuiComponent & EventListener
                 obj.lowerLimLbl(i).String = ViewBsphereControl.fmtLim(lo);
                 obj.upperLimLbl(i).String = ViewBsphereControl.fmtLim(hi);
             end
-            obj.panelMain.Title = sprintf('Cartesian (Gauss)  [%s]', obj.helm.frameName);
-            obj.btnMoveToBlue.Enable = BooleanHelper.boolToOnOff(obj.isBlueMovingAvailable);
+            obj.titleText.String = sprintf('Field, cartesian   %s   %s', char(183), obj.helm.frameName);
+            TargetEntry.paintApply(obj.btnMoveToBlue, obj.isBlueMovingAvailable);
+            obj.btnClearTargets.Enable = BooleanHelper.boolToOnOff(obj.isBlueMovingAvailable);
             drawnow
         end
 
@@ -162,28 +128,33 @@ classdef ViewBcartControl < GuiComponent & EventListener
             end
         end
 
-        function showEdtCurB(obj, index, shouldShow)
-            if shouldShow
-                obj.hboxCurB(index).Widths = [-1 -1];
-            else
-                obj.hboxCurB(index).Widths = [-1 0];
-            end
+        function showEdtCurB(~, ~, ~)
+            % now | target, both always shown
+            % (now and target are separate columns: nothing to show or hide)
         end
 
         function checkEdtCurBValue(obj, index)
-            str = obj.edtCurB(index).String;
+            % Enter in a target: pending (amber) if it is reachable; empty = no target
+            str = strtrim(obj.edtCurB(index).String);
             if isempty(str)
                 obj.clearEdtCurB(index);
-                if all(obj.edtCurBValue == inf)
-                    obj.isBlueMovingAvailable = false;
-                    obj.btnMoveToBlue.Enable = 'off';
-                end
-                return
-            end
-            if obj.isSettable(index, str)
+            elseif obj.isSettable(index, str)
                 obj.edtCurBValue(index) = str2double(str);
+                obj.edtCurB(index).String = StringHelper.formatNumber(obj.edtCurBValue(index));
+                TargetEntry.showPending(obj.edtCurB(index), true);
+            elseif isinf(obj.edtCurBValue(index))
+                obj.clearEdtCurB(index);
+            else
+                obj.edtCurB(index).String = StringHelper.formatNumber(obj.edtCurBValue(index));
             end
-            obj.edtCurB(index).String = StringHelper.formatNumber(obj.edtCurBValue(index));
+            obj.isBlueMovingAvailable = any(~isinf(obj.edtCurBValue));
+            obj.refresh();
+        end
+
+        function clearAllTargets(obj)
+            for i = 1:3; obj.clearEdtCurB(i); end
+            obj.isBlueMovingAvailable = false;
+            obj.refresh();
         end
 
         function ok = isSettable(obj, index, str)
@@ -200,8 +171,7 @@ classdef ViewBcartControl < GuiComponent & EventListener
         function clearEdtCurB(obj, index)
             obj.edtCurB(index).String = '';
             obj.edtCurBValue(index) = inf;
-            obj.showEdtCurB(index, false);
-            set(gcf, 'CurrentObject', gcf);
+            TargetEntry.showPending(obj.edtCurB(index), false);
         end
     end
 

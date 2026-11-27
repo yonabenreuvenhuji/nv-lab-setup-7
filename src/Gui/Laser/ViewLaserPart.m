@@ -18,8 +18,8 @@ classdef ViewLaserPart < ViewHBox & EventListener
     properties (Constant)
         DEFULT_DECIMAL_DIGITS = 2
         SIGNIFICANT_DIGITS = 2
-        WIDTHS = [70, 50, 180]
-        ROW_HEIGHT = 30
+        WIDTHS = [96, 64, -1]
+        ROW_HEIGHT = 26
     end
     
     methods
@@ -54,19 +54,22 @@ classdef ViewLaserPart < ViewHBox & EventListener
 %             label = uicontrol('Parent', partRow, obj.PROP_LABEL{:}, 'String', nameToDisplay); % obj.headerProps got by inheritance from GuiComponent %
 %             labelWidth = obj.getWidth(label);
             
-            obj.cbxEnabled = uicontrol(obj.PROP_CHECKBOX{:}, 'Parent', partRow, ...
-                'String', nameToDisplay, ...
-                'Callback', @obj.cbxEnabledCallback);
-            obj.edtPowerPercentage = uicontrol(obj.PROP_EDIT{:}, 'Parent', partRow);
-            obj.sliderPower = uicontrol(obj.PROP_SLIDER{:}, 'Parent', partRow, ...
+            partRow.BackgroundColor = MainGuiStyle.col().panel;
+            obj.cbxEnabled = MainGuiStyle.checkbox(partRow, nameToDisplay, false, ...
+                'Callback', @obj.cbxEnabledCallback, ...
+                'TooltipString', sprintf('%s on / off', nameToDisplay));
+            obj.edtPowerPercentage = MainGuiStyle.edit(partRow, '', ...
+                'TooltipString', sprintf('%s, from %s to %s %s', nameToDisplay, ...
+                num2str(obj.minValue), num2str(obj.maxValue), obj.units));
+            obj.sliderPower = MainGuiStyle.slider(partRow, ...
                 'Min', obj.minValue, 'Max', obj.maxValue);
-            
+
             set(partRow, 'Widths', obj.WIDTHS);
-            
-            
+
+
             %%%% UI components set values  %%%%
-            obj.width = sum(obj.WIDTHS) + 20;
-            obj.height = obj.ROW_HEIGHT;            
+            obj.width = 400;
+            obj.height = obj.ROW_HEIGHT;
             
             
             % Set functionality for "setEnabled" and "setValue" %%%%

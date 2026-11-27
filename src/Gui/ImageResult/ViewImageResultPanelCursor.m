@@ -1,73 +1,73 @@
 classdef ViewImageResultPanelCursor < GuiComponent
-    %VIEWSTAGESCANPANELPLOT panel for the cursor
-    %   Detailed explanation goes here
-    
+    %VIEWIMAGERESULTPANELCURSOR "Mouse [Inspect][Select scan area][Move stage here]" in the
+    %image toolbar: what a click on the image does.
+    %
+    %   Inspect           a data tip with the position and the value (was "Marker")
+    %   Select scan area  drag a rectangle: it becomes the Scan area's From/To (was "Zoom");
+    %                     back to Inspect when done
+    %   Move stage here   a click moves the stage there (was "Move to"); in a 3D scan's
+    %                     slice, also to that slice
+
     properties
-        radioMarker     % #1
-        radioZoom       % #2
-        radioLocation   % #3
+        btnModes     % 1x3 toggle buttons, in the order of ImageScanResult.CURSOR_OPTIONS
     end
-    
+
+    properties (Constant)
+        LABELS = {'Inspect', 'Select scan area', 'Move stage here'}
+        TIPS = {'Click a pixel to see where it is and its value', ...
+            'Drag a rectangle on the image: it becomes the From/To of the Scan area', ...
+            'Click on the image to move the stage there'}
+    end
+
     methods
         function obj = ViewImageResultPanelCursor(parent, controller)
             obj@GuiComponent(parent, controller);
-            %             panel = uix.Panel('Parent', parent.component,'Title','Colormap', 'Padding', 5);
-            bgMain = uibuttongroup(...
-                'Parent', parent.component, ...
-                'Title', 'Cursor', ...
-                'SelectionChangedFcn',@obj.callbackRadioSelection);
-            obj.component = bgMain;
-            
-            rbHeight = 15; % "rb" stands for "radio button"
-            rbWidth = 70;
-            paddingFromLeft = 10;
-            
-            obj.radioMarker = uicontrol(obj.PROP_RADIO{:}, 'Parent', bgMain, ...
-                'String', 'Marker', ...
-                'Position', [paddingFromLeft 60 rbWidth rbHeight], ...  % [fromLeft, fromBottom, width, height]
-                'Tag', ImageScanResult.CURSOR_OPTIONS{1});
-            obj.radioZoom = uicontrol(obj.PROP_RADIO{:}, 'Parent', bgMain, ...
-                'String', 'Zoom', ...
-                'Position', [paddingFromLeft 35 rbWidth rbHeight], ...  % [fromLeft, fromBottom, width, height]
-                'Tag', ImageScanResult.CURSOR_OPTIONS{2});
-            obj.radioLocation = uicontrol(obj.PROP_RADIO{:}, 'Parent', bgMain, ...
-                'String', 'Move to', ...
-                'Position', [paddingFromLeft 10 rbWidth rbHeight], ...  % [fromLeft, fromBottom, width, height]
-                'Tag', ImageScanResult.CURSOR_OPTIONS{3});
-            
-            obj.height = 100;
-            obj.width = 90;
+            box = MainGuiStyle.hbox(parent.component, 2);
+            obj.component = box;
+            MainGuiStyle.label(box, 'Mouse', 'right');
+            obj.btnModes = gobjects(1, 3);
+            for k = 1:3
+                obj.btnModes(k) = MainGuiStyle.toggle(box, obj.LABELS{k}, ...
+                    'TooltipString', obj.TIPS{k}, 'Callback', @(h,e) obj.select(k));
+            end
+            box.Widths = [44 62 110 110];
+            obj.height = MainGuiStyle.ROW_H;
+            obj.width = sum(box.Widths) + 6;
+            obj.show(1);
         end
-        
+
         function update(obj)
-            % Executes when image updates
-            obj.component.SelectedObject = obj.radioMarker;
+            % Executes when image updates. A full redraw puts the image back in Inspect mode;
+            % a scan's line-by-line (or pixel-by-pixel) updates do not.
+            imageScanResult = getObjByName(ImageScanResult.NAME);
+            if isempty(imageScanResult) || imageScanResult.lastUpdateFull
+                obj.show(1);
+            end
         end
-        
-        %%%% Callbacks %%%%
-        function callbackRadioSelection(obj, ~, event)
+
+        function select(obj, k)
             imageScanResult = getObjByName(ImageScanResult.NAME);
             if isempty(imageScanResult); throwBaseObjException(ImageScanResult.NAME); end
-            
-            action = event.NewValue.Tag;
-            imageScanResult.updateDataCursor(action);
-            if event.NewValue == obj.radioZoom
-                obj.backToMarker
+            obj.show(k);
+            imageScanResult.updateDataCursor(ImageScanResult.CURSOR_OPTIONS{k});
+            if k == 2
+                % The rectangle has been drawn (or cancelled): back to Inspect
+                obj.show(1);
+                imageScanResult.updateDataCursor(ImageScanResult.CURSOR_OPTIONS{1});
             end
         end
     end
-    
+
     methods (Access = private)
-        function backToMarker(obj)
-            % When other operations finish, we want to return the cursor to
-            % "marker" mode, both visually and functionally
-            obj.radioMarker.Value = true;
-            
-            imageScanResult = getObjByName(ImageScanResult.NAME);
-            if isempty(imageScanResult); throwBaseObjException(ImageScanResult.NAME); end
-            
-            action = imageScanResult.CURSOR_OPTIONS{1};
-            imageScanResult.updateDataCursor(action);    % functionally
+        function show(obj, k)
+            C = MainGuiStyle.col();
+            for j = 1:3
+                if j == k
+                    set(obj.btnModes(j), 'Value', 1, 'BackgroundColor', C.accent, 'ForegroundColor', [1 1 1]);
+                else
+                    set(obj.btnModes(j), 'Value', 0, 'BackgroundColor', [0.94 0.94 0.94], 'ForegroundColor', C.ink);
+                end
+            end
         end
     end
 end

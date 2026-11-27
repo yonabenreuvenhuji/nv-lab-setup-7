@@ -35,13 +35,22 @@ classdef EventExtraScanUpdated < handle
         end
         
         function phAxis = getSecondAxis(obj)
-            if ~iscell(obj.phAxes) || obj.dimNumber ~= 2
+            if ~iscell(obj.phAxes) || obj.dimNumber < 2
 %                 EventStation.anonymousWarning('asking for second axis when no such exist! answer will be a 0x0 vector')
                 phAxis = [];
             else
                 phAxis = obj.phAxes{2};
             end
-            
+
+        end
+
+        function phAxis = getThirdAxis(obj)
+            % The slice axis of a 3D scan; [] otherwise
+            if ~iscell(obj.phAxes) || obj.dimNumber < 3 || numel(obj.phAxes) < 3
+                phAxis = [];
+            else
+                phAxis = obj.phAxes{3};
+            end
         end
         
         function num = dimNumber(obj)

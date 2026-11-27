@@ -1266,6 +1266,7 @@ classdef ClassStanda8SMC4_stages < ClassStage
                     pause(tPixel);
                     obj.writeTrigger(0);
                 end
+                StageScanner.notePixel();   % the GUI's progress bar
             end
         end
 

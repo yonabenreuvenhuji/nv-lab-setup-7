@@ -22,23 +22,26 @@ classdef ViewSave < GuiComponent & EventListener
             obj@GuiComponent(parent, controller);
             
             %%%% Ui components init %%%%
-            boxPanel = parent.component;
-            vboxSaveImage = uix.VBox('Parent', boxPanel, 'Spacing', 5);
-            saveImage1stRow = uix.HBox('Parent', vboxSaveImage, 'Spacing', 5);
-            saveImage2stRow = uix.HBox('Parent', vboxSaveImage, 'Spacing', 5);
+            S = MainGuiStyle;
+            vboxSaveImage = MainGuiStyle.vbox(parent.component, S.GAP);
+            saveImage1stRow = MainGuiStyle.hbox(vboxSaveImage, 4);
+            saveImage2stRow = MainGuiStyle.hbox(vboxSaveImage, 4);
             
-            obj.btnSave = uicontrol(obj.PROP_BUTTON{:}, 'Parent', saveImage1stRow, 'string', 'Save');
-            obj.btnSaveAs = uicontrol(obj.PROP_BUTTON{:}, 'Parent', saveImage1stRow, 'string', 'Save As');
-            uix.Empty('Parent', saveImage1stRow);  % space
-            obj.btnUpdate = uicontrol(obj.PROP_BUTTON{:}, 'Parent', saveImage1stRow, 'string', 'Update Save');
-            saveImage1stRow.Widths = [-4 -5 -1 -5];
+            obj.btnSave = MainGuiStyle.button(saveImage1stRow, 'Save', 'normal', 'FontWeight', 'bold', ...
+                'TooltipString', 'Save the scan (and its settings) to the save folder');
+            obj.btnSaveAs = MainGuiStyle.button(saveImage1stRow, 'Save as...', 'normal', ...
+                'TooltipString', 'Save the scan under a name and folder you choose');
+            obj.btnUpdate = MainGuiStyle.button(saveImage1stRow, 'Update notes in file', 'normal', ...
+                'TooltipString', 'Write the notes below into the file that is loaded/saved');
+            saveImage1stRow.Widths = [-1 -1 -1.5];
             
-            uicontrol(obj.PROP_LABEL{:}, 'Parent', saveImage2stRow, 'String', 'Notes:'); % 'Notes' label
-            obj.edtNotes = uicontrol(obj.PROP_EDIT{:}, 'Parent', saveImage2stRow);
-            saveImage2stRow.Widths = [-1 -4];
+            MainGuiStyle.label(saveImage2stRow, 'Notes', 'left');
+            obj.edtNotes = MainGuiStyle.edit(saveImage2stRow, '', 'HorizontalAlignment', 'left', ...
+                'FontSize', S.FONT, 'TooltipString', 'Saved with the scan, and shown as the title of its figure');
+            saveImage2stRow.Widths = [40 -1];
             
-            vboxSaveImage.Heights = [35 25];
-            
+            vboxSaveImage.Heights = [S.ROW_H S.ROW_H];
+            obj.component = vboxSaveImage;
             %%%% UI components set callbacks %%%%
             set(obj.edtNotes, 'Callback', @obj.edtNotesCallback);
             set(obj.btnSave, 'Callback', @obj.btnSaveCallback);
@@ -46,7 +49,7 @@ classdef ViewSave < GuiComponent & EventListener
             set(obj.btnUpdate, 'Callback', @obj.btnUpdateCallback);
             
             %%%% Set internal values %%%%
-            obj.height = 70;
+            obj.height = 2*MainGuiStyle.ROW_H + MainGuiStyle.GAP;
             obj.width = 400;
             obj.category = category;
             

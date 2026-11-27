@@ -8,12 +8,23 @@ classdef StageScanner < EventSender & EventListener & Savable
         mStageName
         mStageScanParams
         mCurrentlyScanning = false
+        mProgress = struct('done', 0, 'inLine', 0, 'total', 0, 'tic', [], 'lastSent', [], ...
+            'line', 0, 'nLines', 0, 'slice', 0, 'nSlices', 0, 'pass', 0, 'dims', 0)
     end
-    
+
+    properties (Access = private)
+        mVolume = []    % 3D scan in progress: struct(vol, slice) -- see scan3D / publishScan
+        mHalted = false % the stages were halted during this scan (then no return to start)
+        mLive = []      % the line being scanned, for drawing it pixel by pixel -- see livePreview
+    end
+
     properties (Constant)
         NAME = 'stageScanner'
-        
+
         EVENT_SCAN_UPDATED = 'scanUpdated'
+        EVENT_SCAN_PROGRESS = 'scanProgress'    % extraInfo.scanProgress = struct (see progressInfo)
+        PROGRESS_MIN_INTERVAL = 0.2             % s between progress events
+        LIVE_MIN_INTERVAL = 0.1                 % s between pixel-by-pixel redraws of the image
         EVENT_SCAN_STARTED = 'scanStarted'
         EVENT_SCAN_FINISHED = 'scanFinished'
         EVENT_SCAN_STOPPED_MANUALLY = 'scanStoppedManually'
@@ -30,7 +41,7 @@ classdef StageScanner < EventSender & EventListener & Savable
         function obj = StageScanner
             obj@EventSender(StageScanner.NAME);
             obj@Savable(StageScanner.NAME);
-            obj@EventListener(SaveLoadCatImage.NAME);
+            obj@EventListener({SaveLoadCatImage.NAME, StageControlEvents.NAME});     % (stage control: Halt)
             obj.clear();
         end
     end
@@ -52,10 +63,19 @@ classdef StageScanner < EventSender & EventListener & Savable
             obj.sendEvent(struct(obj.EVENT_SCAN_STARTED, true));
         end
         function sendEventScanUpdated(obj, scanResults, scanExtraInfo)
-            axis1 = obj.mStageScanParams.getFirstScanAxisVector;
-            axis2 = obj.mStageScanParams.getSecondScanAxisVector;
-            phAxes = {axis1, axis2};
-            scanAxes = obj.mStageScanParams.getScanAxes;
+            params = obj.mStageScanParams;
+            if params.nDims == 3
+                % A volume: the image axes (in xyz order), then the slice axis
+                [imgAxes, sliceAxis] = StageScanner.volumeAxes(params);
+                phAxes = {params.getScanAxisVector(imgAxes(1)), params.getScanAxisVector(imgAxes(2)), ...
+                    params.getScanAxisVector(sliceAxis)};
+                scanAxes = ClassStage.SCAN_AXES([imgAxes, sliceAxis]);
+            else
+                axis1 = params.getFirstScanAxisVector;
+                axis2 = params.getSecondScanAxisVector;
+                phAxes = {axis1, axis2};
+                scanAxes = params.getScanAxes;
+            end
             stageName = obj.mStageName;
             botLabel = obj.getBottomScanLabel;
             leftLabel = obj.getLeftScanLabel;
@@ -83,11 +103,23 @@ classdef StageScanner < EventSender & EventListener & Savable
             end
             isFastScan = obj.mStageScanParams.fastScan;
             stage.FastScan(isFastScan);
-            
+
+            % Same direction on every line, or zigzag -- for stages that can do both
+            if isprop(stage, 'scanBidirectional')
+                stage.scanBidirectional = logical(obj.mStageScanParams.zigzag);
+            end
+
+            % Where the stage is now: it goes back here when the scan ends (returnToStart)
+            startPos = stage.Pos(stage.availableAxes);
+            obj.mHalted = false;
+
             % From now on, changes in the GUI (from\to\fixed\numPoints)
             % won't affect the StageScanParmas object stored here.
-            
+
             obj.mCurrentlyScanning = true;
+            obj.mVolume = [];
+            obj.mLive = [];
+            obj.progressStart(obj.mStageScanParams, 1);
             obj.sendEventScanStarting();
             
             spcm = getObjByName(Spcm.NAME);
@@ -115,8 +147,11 @@ classdef StageScanner < EventSender & EventListener & Savable
             try
                 [kcpsScanMatrix, extraInfo] = obj.scan(stage, spcm, obj.mStageScanParams);
                 % kcps = kilo counts per second
-                
+
+                pass = 1;
                 while (stage.scanParams.continuous && obj.mCurrentlyScanning)
+                    pass = pass + 1;
+                    obj.progressStart(obj.mStageScanParams, pass);
                     [kcpsScanMatrix, extraInfo] = obj.scan(stage, spcm, obj.mStageScanParams, kcpsScanMatrix, extraInfo);
                     drawnow; % todo check what happens if removing this line
                 end
@@ -124,12 +159,18 @@ classdef StageScanner < EventSender & EventListener & Savable
                 % We couldn't scan. Wrap it up nicely
                 spcm.setSPCMEnable(false);
                 obj.mCurrentlyScanning = false;
+                obj.mVolume = [];
+                obj.mLive = [];
                 stage.sendEventStageAvailabilityChanged;
                 if obj.mStageScanParams.isMWContrastScan
                     fg = getObjByName(FrequencyGenerator.getDefaultFgName);
                     fg.output = 0;
                 end
-                
+                try
+                    obj.returnToStart(stage, startPos);
+                catch
+                end
+
                 rethrow(err)
             end
             if obj.mStageScanParams.isMWContrastScan
@@ -141,6 +182,7 @@ classdef StageScanner < EventSender & EventListener & Savable
             if isempty(kcpsScanMatrix)
                 spcm.setSPCMEnable(false);
                 obj.mCurrentlyScanning = false;
+                obj.returnToStart(stage, startPos);
                 stage.sendEventStageAvailabilityChanged;
                 return
             end
@@ -150,9 +192,13 @@ classdef StageScanner < EventSender & EventListener & Savable
             spcm.setSPCMEnable(false);
             obj.mScan = kcpsScanMatrix;
             obj.mScanExtraInfo = extraInfo;
-            
+            obj.mVolume = [];
+            obj.mLive = [];
+
             scanStoppedManually = ~obj.mCurrentlyScanning;  % maybe someone has changed this boolean meanwhile
             obj.mCurrentlyScanning = false;                 % So when events are sent, they will know we are done.
+            obj.returnToStart(stage, startPos);             % (before "finished": then the stage is back)
+            obj.progressSend(true);
             
             if scanStoppedManually
                 obj.sendEventScanStopped();
@@ -176,6 +222,7 @@ classdef StageScanner < EventSender & EventListener & Savable
             skipCreatingMatrix = exist('kcpsScanMatrixOptional', 'var');
             
             kcpsScanMatrix = [];        % Return value for nonvalid dinemsion number
+            extraInfo = struct();
             nDimensions = sum(~scanParams.isFixed);
             switch nDimensions
                 case 0
@@ -192,7 +239,12 @@ classdef StageScanner < EventSender & EventListener & Savable
                         [kcpsScanMatrix, extraInfo] = obj.scan2D(stage, spcm, scanParams);
                     end
                 case 3
-                    EventStation.anonymousWarning('3D scan is not implemented!');
+                    % 3D scan: one 2D scan per slice
+                    if skipCreatingMatrix
+                        [kcpsScanMatrix, extraInfo] = obj.scan3D(stage, spcm, scanParams, kcpsScanMatrixOptional);
+                    else
+                        [kcpsScanMatrix, extraInfo] = obj.scan3D(stage, spcm, scanParams);
+                    end
                 otherwise
                     EventStation.anonymousWarning('%d-dimensional scan requested. String thoery is not yet implemented!\n', nDimensions);
             end
@@ -264,12 +316,16 @@ classdef StageScanner < EventSender & EventListener & Savable
             isMWContrastScan = scanParams.isMWContrastScan;
             kcpsScanVector = zeros(nPixels, 1+isMWContrastScan);
             axisToScan = scanParams.getScanAxes; % string of size 1
-            x = scanParams.getScanAxisVector(1); % vector between [min, max] or the fixed position if exist
-            y = scanParams.getScanAxisVector(2); % vector between [min, max] or the fixed position if exist
-            z = scanParams.getScanAxisVector(3); % vector between [min, max] or the fixed position if exist
+            % vector between [min, max] (in the order it is scanned) or the fixed position if exist
+            x = scanParams.getScanAxisVectorInScanOrder(1);
+            y = scanParams.getScanAxisVectorInScanOrder(2);
+            z = scanParams.getScanAxisVectorInScanOrder(3);
+            scannedAxis = find(~scanParams.isFixed, 1);
+            isReversed = numel(scanParams.reverse) >= scannedAxis && scanParams.reverse(scannedAxis);
             
             bHasLiftime = spcm.hasLifetime();
             extraInfo = struct();
+            extraInfo.sterr = nan(nPixels, 1+isMWContrastScan);  % per-point standard error, if the detector gives one
             spcm = getObjByName(Spcm.NAME);
             if bHasLiftime && ~isMWContrastScan
                 extraInfo.hist = zeros(nPixels, spcm.nBins);
@@ -307,6 +363,7 @@ classdef StageScanner < EventSender & EventListener & Savable
                 
                 % try to scan
                 kcps = zeros(curPixelsAmountToScan , size(kcpsScanVector, 2));
+                kcpsErr = nan(size(kcps));
                 for i = 1:size(kcpsScanVector, 2) % MW Contrast
                     for trial = 1:StageScanner.TRIALS_AMOUNT_ON_ERROR
                         if i==2
@@ -326,12 +383,19 @@ classdef StageScanner < EventSender & EventListener & Savable
                             end
                             spcm.startScanCount();
                             
-                            % scan stage
+                            % scan stage (drawing the points as they come: unmeasured = NaN)
+                            liveVector = kcpsScanVector;
+                            liveVector(vectorStartIndex:vectorEndIndex, i) = NaN;
+                            obj.liveStart(liveVector, extraInfo, '1D', 1, vectorStartIndex, vectorEndIndex, ...
+                                false, isReversed, i, true);
                             scanfuncName = sprintf('Scan%s', upper(axisToScan));
                             feval(scanfuncName, stage, x,y,z, nFlat, nOverRun, tPixel);
+                            obj.liveStop();
                             
                             % read counter
-                            kcps(:,i) = spcm.readFromScan();
+                            [lineValues, lineErr] = StageScanner.readScanLine(spcm);
+                            kcps(:,i) = lineValues;
+                            kcpsErr(:,i) = lineErr;
                             if bHasLiftime && ~isMWContrastScan
                                 hist = spcm.lastScanHist;
                             end
@@ -343,6 +407,7 @@ classdef StageScanner < EventSender & EventListener & Savable
                             scanOk = true;
                             break;
                         catch err
+                            obj.liveStop();
 %                             rethrow(err) % Uncomment to debug
                             warning(err.message);
                             
@@ -363,6 +428,15 @@ classdef StageScanner < EventSender & EventListener & Savable
                 stage.AbortScan();
                 if ~scanOk; obj.sendError(sprintf('Scan failed after %d trials', StageScanner.TRIALS_AMOUNT_ON_ERROR));end
                 
+                % A reversed axis was scanned to -> from: store it from -> to
+                if isReversed
+                    kcps = flipud(kcps);
+                    kcpsErr = flipud(kcpsErr);
+                    if bHasLiftime && ~isMWContrastScan
+                        hist = flipud(hist);
+                    end
+                end
+
                 % Update the scan results in the returned vector
                 if isMWContrastScan % Contrast
                     kcpsScanVector(vectorStartIndex:vectorEndIndex, :) = kcps;
@@ -372,7 +446,9 @@ classdef StageScanner < EventSender & EventListener & Savable
                         extraInfo.hist(vectorStartIndex:vectorEndIndex, :) = hist;
                     end
                 end
-                
+                extraInfo.sterr(vectorStartIndex:vectorEndIndex, :) = kcpsErr;
+                obj.progressLineDone(curPixelsAmountToScan * size(kcpsScanVector, 2));
+
                 % Go tell everybody
                 obj.sendEventScanUpdated(kcpsScanVector, extraInfo);
                 
@@ -408,9 +484,11 @@ classdef StageScanner < EventSender & EventListener & Savable
             if isempty(scanParams.scanBlocks) % Normal scan, look for chucks due to stages limits
                 % ~~~~ preparing variables: ~~~~
                 maxScanSize = stage.ReturnMaxScanSize(2);
-                [axisAIndex, axisBIndex] = StageScanner.optimize2dScanDirections(maxScanSize, scanParams.copy);
+                [axisAIndex, axisBIndex] = StageScanner.lineAndStepAxes(maxScanSize, scanParams);
                 axisCIndex = setdiff(ClassStage.getAxis(ClassStage.SCAN_AXES), [axisAIndex, axisBIndex]);
                 % axis c is where the zero point is not moving throgh the scan
+                reverseA = numel(scanParams.reverse) >= axisAIndex && scanParams.reverse(axisAIndex);
+                reverseB = numel(scanParams.reverse) >= axisBIndex && scanParams.reverse(axisBIndex);
                 isFlipped = axisAIndex > axisBIndex;  % (for example, if axis y is before axis x, than "isFlipped" == true)
                 isFastScan = scanParams.fastScan;    % a boolean
                 tPixel = scanParams.pixelTime;   % time for each pixel
@@ -440,6 +518,10 @@ classdef StageScanner < EventSender & EventListener & Savable
                         end
                     end
                 end
+                if ~isstruct(extraInfo); extraInfo = struct(); end
+                if ~isfield(extraInfo, 'sterr') || ~isequal(size(extraInfo.sterr), size(kcpsScanMatrix))
+                    extraInfo.sterr = nan(size(kcpsScanMatrix));   % per-pixel standard error, if the detector gives one
+                end
                 obj.mScan = kcpsScanMatrix;
                 obj.mScanExtraInfo = extraInfo;
                 
@@ -455,15 +537,22 @@ classdef StageScanner < EventSender & EventListener & Savable
                     endIndexAxisA = startIndexAxisA + chunkSizeAxisA - 1;
                     chunkAxisA = vectorAxisA(startIndexAxisA:endIndexAxisA);
                     chunkAxisB = vectorAxisB;  % no restriction on number of lines!
+                    lineIndexMap = 1:length(chunkAxisB);
+                    % A reversed axis is visited to -> from; the matrix keeps from -> to
+                    if reverseA; chunkAxisA = fliplr(chunkAxisA); end
+                    if reverseB
+                        chunkAxisB = fliplr(chunkAxisB);
+                        lineIndexMap = fliplr(lineIndexMap);
+                    end
                     [kcpsScanMatrix, extraInfo] = obj.scan2dChunk(...
                         kcpsScanMatrix, spcm, stage, tPixel, chunkAxisA, chunkAxisB, ...
                         axisAIndex, axisBIndex, pointAxisC, isFastScan, isFlipped, ...
                         1, length(chunkAxisB), ...
                         startIndexAxisA, endIndexAxisA, ...
-                        extraInfo);
+                        extraInfo, lineIndexMap, reverseA);
                     obj.mScan = kcpsScanMatrix;
                     obj.mScanExtraInfo = extraInfo;
-                    obj.sendEventScanUpdated(kcpsScanMatrix, extraInfo);
+                    obj.publishScan(kcpsScanMatrix, extraInfo);
                     
                     startIndexAxisA = endIndexAxisA + 1;     % Updating for next chunk
                 end
@@ -528,7 +617,7 @@ classdef StageScanner < EventSender & EventListener & Savable
                         extraInfo);
                     obj.mScan = kcpsScanMatrix;
                     obj.mScanExtraInfo = extraInfo;
-                    obj.sendEventScanUpdated(kcpsScanMatrix, extraInfo);
+                    obj.publishScan(kcpsScanMatrix, extraInfo);
                 end
             end
         end
@@ -550,9 +639,17 @@ classdef StageScanner < EventSender & EventListener & Savable
                 matrixIndexLineEnd, ... integer. Index at which to stop inserting lines to the matrix
                 matrixIndexPixelInLineStart, ... integer. Index at which to start inserting pixels to the line in the matrix
                 matrixIndexPixelInLineEnd, ... integer. Index in which to stop inserting pixels to the line in the matrix
-                extraInfo ... extra info matrix (maybe partly filled)
+                extraInfo, ... extra info matrix (maybe partly filled)
+                lineIndexMap, ... (optional) matrix line of each scanned line, in scan order. Default: start:end
+                flipPixels ... (optional) logical. axisAPixelsPerLine runs to -> from; store it reversed
                 )
             % This function scans a chunk from the scan-matrix
+            if ~exist('lineIndexMap', 'var') || isempty(lineIndexMap)
+                lineIndexMap = matrixIndexLineStart : matrixIndexLineEnd;
+            end
+            if ~exist('flipPixels', 'var') || isempty(flipPixels)
+                flipPixels = false;
+            end
             if length(axisAPixelsPerLine) ~= matrixIndexPixelInLineEnd - matrixIndexPixelInLineStart + 1
                 obj.sendError('Can''t scan - mismatch size of vector!')
             end
@@ -584,8 +681,13 @@ classdef StageScanner < EventSender & EventListener & Savable
             
             % do the scan
             spcm.startScanCount();
-            for lineIndex = matrixIndexLineStart : matrixIndexLineEnd
+            obj.mProgress.nLines = numel(lineIndexMap);
+            lineCount = 0;      % lines of this chunk so far (the stage counts the same way)
+            isZigzag = isprop(stage, 'scanBidirectional') && stage.scanBidirectional;
+            for lineIndex = lineIndexMap
                 if ~obj.mCurrentlyScanning; break; end
+                obj.mProgress.line = obj.mProgress.line + 1;
+                lineCount = lineCount + 1;
                 success = false;
                 for i = 1:size(kcpsMatrix, 3) % MW Contrast
                     if i==2
@@ -597,20 +699,37 @@ classdef StageScanner < EventSender & EventListener & Savable
                             if isa(spcm, 'PhotoDiodeDigitizerNiDaqControlled')
                                 spcm.startScanCount();
                             end
+                            obj.liveStart(kcpsMatrix, extraInfo, '2D', lineIndex, ...
+                                matrixIndexPixelInLineStart, matrixIndexPixelInLineEnd, isFlipped, flipPixels, i, ...
+                                ~isZigzag || mod(lineCount, 2) == 1);
                             wasScannedForward = stage.ScanNextLine();
+                            obj.liveStop();
                             % forwards - if true, the line was scanned normally,
                             %            if false - should flip the results
-                            kcpsVector = spcm.readFromScan();
-                            kcpsVector = BooleanHelper.ifTrueElse(wasScannedForward, kcpsVector, fliplr(kcpsVector));
+                            [kcpsVector, errVector] = StageScanner.readScanLine(spcm);
+                            kcpsVector = kcpsVector(:)';
+                            errVector = errVector(:)';
+                            if ~wasScannedForward
+                                kcpsVector = fliplr(kcpsVector);
+                                errVector = fliplr(errVector);
+                            end
+                            if flipPixels
+                                kcpsVector = fliplr(kcpsVector);    % visited to -> from, stored from -> to
+                                errVector = fliplr(errVector);
+                            end
+                            hasErr = isfield(extraInfo, 'sterr') && isequal(size(extraInfo.sterr), size(kcpsMatrix));
                             if isFlipped
                                 kcpsMatrix(matrixIndexPixelInLineStart:matrixIndexPixelInLineEnd, lineIndex, i) = kcpsVector;
+                                if hasErr; extraInfo.sterr(matrixIndexPixelInLineStart:matrixIndexPixelInLineEnd, lineIndex, i) = errVector; end
                             else
                                 kcpsMatrix(lineIndex, matrixIndexPixelInLineStart:matrixIndexPixelInLineEnd, i) = kcpsVector;
+                                if hasErr; extraInfo.sterr(lineIndex, matrixIndexPixelInLineStart:matrixIndexPixelInLineEnd, i) = errVector; end
                             end
                             
                             if bHasLiftime && ~isMWContrastScan
                                 hist = spcm.lastScanHist;
                                 hist = BooleanHelper.ifTrueElse(wasScannedForward, hist, fliplr(hist));
+                                if flipPixels; hist = fliplr(hist); end
                                 if isFlipped
                                     extraInfo.hist(matrixIndexPixelInLineStart:matrixIndexPixelInLineEnd, lineIndex, :) = hist;
                                 else
@@ -621,6 +740,7 @@ classdef StageScanner < EventSender & EventListener & Savable
                             success = true;
                             break;
                         catch err
+                            obj.liveStop();
 %                             rethrow(err);  % Uncomment to debug
                             warning(err.message);
                             
@@ -644,8 +764,9 @@ classdef StageScanner < EventSender & EventListener & Savable
                     if i==2
                         pg.off('MW');
                     end
+                    obj.progressLineDone(nPixels);
                 end % MW Contrast
-                obj.sendEventScanUpdated(kcpsMatrix, extraInfo);
+                obj.publishScan(kcpsMatrix, extraInfo);
                 
                 if ~success
                     % We failed at reading the line, so there is probably
@@ -675,6 +796,201 @@ classdef StageScanner < EventSender & EventListener & Savable
         end
         
         
+        function [volume, extraInfo] = scan3D(obj, stage, spcm, scanParams, optionalVolume)
+            % A 3D scan: one 2D scan per slice. scanParams.scanOrder decides the axes: the
+            % first runs along lines, the second steps between lines, the third steps
+            % between slices (default: xy slices, one per z).
+            %
+            % volume: [rows x cols x slices (x 2 with MW contrast)]. Rows and columns are the
+            % two image axes in xyz order, exactly as a 2D scan of those axes stores them, so
+            % every slice is a normal 2D image. Slice k is at the k-th point of the slice
+            % axis (from -> to, whatever order they were visited in).
+            extraInfo = struct();
+            [imgAxes, sliceAxis] = StageScanner.volumeAxes(scanParams);
+            order = scanParams.orderedScanAxes;
+            sliceVector = scanParams.getScanAxisVector(sliceAxis);
+            nSlices = numel(sliceVector);
+            nRows = scanParams.numPoints(imgAxes(2));
+            nCols = scanParams.numPoints(imgAxes(1));
+            nLayers = 1 + logical(scanParams.isMWContrastScan);
+            if exist('optionalVolume', 'var') && isequal(size(optionalVolume, 1:4), [nRows nCols nSlices nLayers])
+                volume = optionalVolume;
+            else
+                volume = nan(nRows, nCols, nSlices, nLayers);
+            end
+            sliceOrder = 1:nSlices;
+            if numel(scanParams.reverse) >= sliceAxis && scanParams.reverse(sliceAxis)
+                sliceOrder = fliplr(sliceOrder);
+            end
+
+            obj.mProgress.nSlices = nSlices;
+            for n = 1:nSlices
+                if ~obj.mCurrentlyScanning; break; end
+                k = sliceOrder(n);
+                obj.mProgress.slice = n;
+                obj.mProgress.line = 0;
+
+                % This slice is a 2D scan with the slice axis held at its k-th point
+                sliceParams = scanParams.copy;
+                sliceParams.scanBlocks = {};
+                sliceParams.isFixed(sliceAxis) = true;
+                sliceParams.fixedPos(sliceAxis) = sliceVector(k);
+                sliceParams.scanOrder = ClassStage.SCAN_AXES(order(1:2));
+
+                obj.mVolume = struct('vol', volume, 'slice', k);
+                obj.publishScan(volume(:, :, k, :), struct());    % show the slice being scanned
+                slice = obj.scan2D(stage, spcm, sliceParams);
+                if isempty(obj.mVolume)     % (cleared if the scan was stopped from outside)
+                    break
+                end
+                volume = obj.mVolume.vol;
+                if ~isempty(slice)
+                    volume(:, :, k, :) = reshape(slice, nRows, nCols, 1, []);
+                end
+            end
+            obj.mVolume = [];
+            obj.mLive = [];
+            obj.mScan = volume;
+            obj.mScanExtraInfo = extraInfo;
+        end
+
+        function publishScan(obj, matrix, extraInfo)
+            % Tell everybody about a partly scanned image. During a 3D scan, the matrix is
+            % the slice being scanned: it goes into the volume, and the volume is sent.
+            if isempty(obj.mVolume)
+                obj.sendEventScanUpdated(matrix, extraInfo);
+                return
+            end
+            k = obj.mVolume.slice;
+            vol = obj.mVolume.vol;
+            if ~isempty(matrix)
+                vol(:, :, k, :) = reshape(matrix, size(vol, 1), size(vol, 2), 1, []);
+            end
+            obj.mVolume.vol = vol;
+            extra3D = struct('sliceIndex', k);
+            if isstruct(extraInfo) && isfield(extraInfo, 'livePixel')
+                extra3D.livePixel = true;
+            end
+            obj.sendEventScanUpdated(vol, extra3D);
+        end
+
+        %% Progress
+        function progressStart(obj, scanParams, pass)
+            n = scanParams.numPoints(~scanParams.isFixed);
+            obj.mProgress = struct('done', 0, 'inLine', 0, ...
+                'total', prod(n) * (1 + logical(scanParams.isMWContrastScan)), ...
+                'tic', tic, 'lastSent', [], 'line', 0, 'nLines', 0, 'slice', 0, 'nSlices', 0, ...
+                'pass', pass, 'dims', numel(n));
+            obj.progressSend(true);
+        end
+
+        function progressLineDone(obj, nPixels)
+            % A line (or a 1D chunk) is complete
+            obj.mProgress.done = min(obj.mProgress.done + nPixels, obj.mProgress.total);
+            obj.mProgress.inLine = 0;
+            obj.progressSend(false);
+        end
+
+        function progressPixelDone(obj)
+            % One pixel of the current line is measured (the stage calls notePixel)
+            obj.mProgress.inLine = obj.mProgress.inLine + 1;
+            obj.progressSend(false);
+            obj.livePreview();
+        end
+
+        %% Drawing a line while it is scanned
+        % The image used to change once per line (a 1D scan: once at the end). Now, while a
+        % line runs, the pixels measured so far are drawn too, at most every
+        % LIVE_MIN_INTERVAL seconds -- for detectors that can say what they have measured so
+        % far (partialScanLine: the photodiode in its default 'software' mode). It costs
+        % little: the image only swaps its pixel data (ImageScanResult.updateImageInPlace),
+        % and the redraw does not run button callbacks (they wait for the end of the line).
+        function liveStart(obj, matrix, extraInfo, kind, row, pixelStart, pixelEnd, isFlipped, flipPixels, layer, forwards)
+            % matrix: the scan so far. kind: '1D' or '2D'. row: the matrix line (2D).
+            % pixelStart..pixelEnd: where this line goes. isFlipped: the matrix is stored
+            % [pixels x lines]. flipPixels: the line was given to the stage to -> from.
+            % layer: 1, or 2 for the MW-on pass. forwards: the stage runs this line in the
+            % order it was given (false: a zigzag line running back).
+            obj.mLive = struct('matrix', matrix, 'extra', extraInfo, 'kind', kind, 'row', row, ...
+                'p0', pixelStart, 'p1', pixelEnd, 'isFlipped', isFlipped, 'flip', logical(flipPixels), ...
+                'layer', layer, 'forwards', logical(forwards), 'lastDraw', tic, 'shown', 0);
+        end
+
+        function liveStop(obj)
+            obj.mLive = [];
+        end
+
+        function livePreview(obj)
+            L = obj.mLive;
+            if isempty(L) || toc(L.lastDraw) < obj.LIVE_MIN_INTERVAL; return; end
+            spcm = getObjByName(Spcm.NAME);
+            if isempty(spcm) || ~ismethod(spcm, 'partialScanLine'); return; end
+            v = spcm.partialScanLine();
+            n = L.p1 - L.p0 + 1;
+            k = numel(v);
+            if k == 0 || k > n || k == L.shown; return; end
+            % pixel p of the line, as measured -> its place in the matrix
+            idx = 1:k;
+            if ~L.forwards; idx = n - idx + 1; end
+            if L.flip; idx = n - idx + 1; end
+            pos = L.p0 - 1 + idx;
+            M = L.matrix;
+            if strcmp(L.kind, '1D')
+                M(pos, L.layer) = v(:);
+            elseif L.isFlipped
+                M(pos, L.row, L.layer) = v(:);
+            else
+                M(L.row, pos, L.layer) = v(:)';
+            end
+            obj.mLive.lastDraw = tic;
+            obj.mLive.shown = k;
+            extra = L.extra;
+            extra.livePixel = true;
+            obj.publishScan(M, extra);
+        end
+
+        function info = progressInfo(obj)
+            % fraction, done, total, elapsed (s), remaining (s), line, nLines, slice,
+            % nSlices, pass, dims, running
+            p = obj.mProgress;
+            done = min(p.done + p.inLine, p.total);
+            info = struct('fraction', 0, 'done', done, 'total', p.total, 'elapsed', 0, ...
+                'remaining', NaN, 'line', p.line, 'nLines', p.nLines, 'slice', p.slice, ...
+                'nSlices', p.nSlices, 'pass', p.pass, 'dims', p.dims, ...
+                'running', obj.mCurrentlyScanning);
+            if p.total > 0
+                info.fraction = done / p.total;
+            end
+            if ~isempty(p.tic)
+                info.elapsed = toc(p.tic);
+                if done > 0
+                    info.remaining = info.elapsed / done * (p.total - done);
+                end
+            end
+        end
+
+        function progressSend(obj, force)
+            % Progress event, at most every PROGRESS_MIN_INTERVAL seconds unless forced
+            p = obj.mProgress;
+            if ~force && ~isempty(p.lastSent) && toc(p.lastSent) < obj.PROGRESS_MIN_INTERVAL
+                return
+            end
+            obj.mProgress.lastSent = tic;
+            obj.sendEvent(struct(obj.EVENT_SCAN_PROGRESS, obj.progressInfo));
+        end
+
+        function returnToStart(obj, stage, startPos)
+            % After a scan (finished, stopped, or failed): move the stage back to where it
+            % was when the scan started -- unless scanParams.returnToStart is off, or the
+            % stages were halted (Halt means "stop moving").
+            p = obj.mStageScanParams;
+            if obj.mHalted || isempty(startPos) || ~isa(p, 'StageScanParams') || ~p.returnToStart
+                return
+            end
+            if all(abs(stage.Pos(stage.availableAxes) - startPos) < 1e-6); return; end
+            stage.move(stage.availableAxes, startPos);  % (sends an error event itself if it fails)
+        end
+
         function stopScan(obj)
             obj.mCurrentlyScanning = false;
             % todo: check maybe we need also
@@ -779,8 +1095,11 @@ classdef StageScanner < EventSender & EventListener & Savable
                     string = sprintf('%s (%s)', axisLetters, StringHelper.MICRON); % for example, 'x (?m)'
                 case 2
                     string = sprintf('%s (%s)', axisLetters(1), StringHelper.MICRON); % (as above)
+                case 3
+                    imgAxes = StageScanner.volumeAxes(obj.mStageScanParams);
+                    string = sprintf('%s (%s)', ClassStage.SCAN_AXES(imgAxes(1)), StringHelper.MICRON);
                 otherwise
-                    string = 'bottom label :)';
+                    string = '';
             end
         end
         
@@ -791,8 +1110,11 @@ classdef StageScanner < EventSender & EventListener & Savable
                 case 2
                     axisLetters = obj.mStageScanParams.getScanAxes;
                     string = sprintf('%s (%s)', axisLetters(2), StringHelper.MICRON); % for example, 'y (?m)'
+                case 3
+                    imgAxes = StageScanner.volumeAxes(obj.mStageScanParams);
+                    string = sprintf('%s (%s)', ClassStage.SCAN_AXES(imgAxes(2)), StringHelper.MICRON);
                 otherwise
-                    string = 'left label :)';
+                    string = '';
             end
         end
     end
@@ -806,6 +1128,57 @@ classdef StageScanner < EventSender & EventListener & Savable
             end
         end
         
+        function [axisAIndex, axisBIndex] = lineAndStepAxes(stageMaxScanSizeInt, scanParams)
+            % The axis each line runs along (A) and the axis stepped between lines (B), for
+            % a 2D scan: as scanParams.scanOrder says, or chosen by
+            % optimize2dScanDirections when it is automatic.
+            if scanParams.isOrderAutomatic
+                [axisAIndex, axisBIndex] = StageScanner.optimize2dScanDirections(stageMaxScanSizeInt, scanParams.copy);
+            else
+                order = scanParams.orderedScanAxes;
+                axisAIndex = order(1);
+                axisBIndex = order(2);
+            end
+        end
+
+        function [imgAxes, sliceAxis] = volumeAxes(scanParams)
+            % For a 3D scan: the two axes of each slice image (in xyz order) and the axis
+            % stepped between slices (the last in the scan order).
+            order = scanParams.orderedScanAxes;
+            sliceAxis = order(end);
+            imgAxes = sort(order(1:end-1));
+        end
+
+        function [values, sterr] = readScanLine(spcm)
+            % The scanned line, and each pixel's standard error when the detector gives one
+            % (the photodiodes: the spread of the digitizer samples in the pixel, / sqrt(N)).
+            % Photon counters give values only: sterr is then NaN. Which kind a detector is,
+            % is read from readFromScan's signature -- calling it twice would read twice.
+            persistent cache
+            if isempty(cache); cache = containers.Map; end
+            cls = class(spcm);
+            if ~isKey(cache, cls)
+                m = findobj(metaclass(spcm).MethodList, 'Name', 'readFromScan');
+                cache(cls) = ~isempty(m) && numel(m(1).OutputNames) >= 2;
+            end
+            if cache(cls)
+                [values, sterr] = spcm.readFromScan();
+                if numel(sterr) ~= numel(values); sterr = nan(size(values)); end
+            else
+                values = spcm.readFromScan();
+                sterr = nan(size(values));
+            end
+        end
+
+        function notePixel()
+            % Called by a stage after each pixel it measures during a scan (Standa, dummy),
+            % so the progress bar moves within a line. Cheap; does nothing outside a scan.
+            scanner = getObjByName(StageScanner.NAME);
+            if ~isempty(scanner) && scanner.mCurrentlyScanning
+                scanner.progressPixelDone();
+            end
+        end
+
         function [axisAIndex, axisBIndex] = optimize2dScanDirections(stageMaxScanSizeInt, scanParams)
             % calculates the best way to scan a 2d scan (given by the scanParams)
             % the movement between pixels in each line is called "axis a",
@@ -858,6 +1231,12 @@ classdef StageScanner < EventSender & EventListener & Savable
         % When events happen, this function jumps.
         % event is the event sent from the EventSender
         function onEvent(obj, event)
+            % Halt: the scan is not followed by a return to the start position
+            if isfield(event.extraInfo, StageControlEvents.HALT)
+                obj.mHalted = true;
+                return
+            end
+            
             % Check if event is "loaded file to SaveLoad" and need to show the image
             if strcmp(event.creator.name, SaveLoadCatImage.NAME) ...
                     && isfield(event.extraInfo, SaveLoad.EVENT_LOAD_SUCCESS_FILE_TO_LOCAL)

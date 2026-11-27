@@ -13,6 +13,14 @@ classdef JsonInfoReader
     
     methods (Static)
         function jsonStruct = getJson()
+            % mainOffline (Setup 7\functions) runs the GUI on dummy hardware without C:\lab:
+            % it puts its configuration here, and removes it when its window closes.
+            jsonStruct = getappdata(groot, 'JsonInfoReaderOverride');
+            if ~isempty(jsonStruct)
+                if ~isfield(jsonStruct, 'debugMode'); jsonStruct.debugMode = false; end
+                return
+            end
+
             %%%% Get the location for the json %%%%
             locationPath = [JsonInfoReader.JSON_LOCATION_DIR, JsonInfoReader.JSON_LOCATION_FILENAME];
             jsonLocationTxt = fileread(locationPath);

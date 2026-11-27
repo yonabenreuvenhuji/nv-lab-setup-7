@@ -117,6 +117,8 @@ classdef (Abstract) Spcm < EventSender
                     spcmObject = CameraControlled.create(Spcm.NAME, spcmTypeStruct);
                 case 'dummy'
                     spcmObject = SpcmDummy();
+                case 'photodiodedummy'
+                    spcmObject = SpcmPhotodiodeDummy();
                 otherwise
                     EventStation.anonymousError(...
                         ['The requested SPCM classname ("%s") was not recognized.\n', ...

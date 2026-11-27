@@ -192,6 +192,11 @@ classdef SpcmCounter < Experiment
             spcm = getObjByName(Spcm.NAME);
             spcm.prepareReadByTime(obj.integrationTimeMillisec/1000);
         end
+
+        function clearHistory(obj)
+            % Forget the records, without touching the detector (when not running)
+            obj.reset;
+        end
         
         function params = getTotalNumberOfParams(obj) %#ok<MANU>
             params = 0;

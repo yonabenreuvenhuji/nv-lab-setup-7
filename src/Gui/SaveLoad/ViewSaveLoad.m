@@ -15,10 +15,10 @@ classdef ViewSaveLoad < GuiComponent & EventListener
         GREEN_BG_COLOR = [0.1 1 0.1];
         RED_BG_COLOR = [1 0.1 0.1];
         
-        COLOR_DEFAULT = [0 0 0];            % black
-        COLOR_UNSAVED = [1 0.1 0.1];        % red
-        COLOR_SAVED = [0.1 0.1 1];          % blue
-        COLOR_AUTOSAVED = [0.1 0.8 0.1];    % medium-dark green
+        COLOR_DEFAULT = [0.32 0.32 0.31];   % secondary ink
+        COLOR_UNSAVED = [0.70 0.12 0.10];   % red: not saved
+        COLOR_SAVED = [0.23 0.44 0.85];     % blue: saved
+        COLOR_AUTOSAVED = [0.20 0.55 0.30]; % green: autosaved
     end
     
     methods
@@ -27,30 +27,27 @@ classdef ViewSaveLoad < GuiComponent & EventListener
             % categoryToSave - string. Which category you should save
             % (mostly 'image' or 'experiments')
             
-            panel = ViewExpandablePanel(parent, controller, 'Save & Load Image');
-            obj@GuiComponent(panel, controller);
+            obj@GuiComponent(parent, controller);
             
             saveLoad = SaveLoad.getInstance(categoryToSave);
             obj@EventListener(saveLoad.name);
             
-            vbox = uix.VBox('Parent', panel.component, 'Spacing', 5, 'Padding', 5);
+            % A titled section; the save and load views go into its inner box
+            [~, vbox] = MainGuiStyle.section(parent.component, 'Save & load scan');
             obj.component = vbox;
             obj.categoryToSave = categoryToSave;
             
-            
             obj.saveView = ViewSave(obj, controller, categoryToSave);
-            obj.tvFileName = uicontrol(obj.PROP_TEXT_NORMAL{:}, 'Parent', obj.component, 'String', 'File Name - ');
+            obj.tvFileName = uicontrol('Parent', obj.component, 'Style', 'text', 'String', 'No file', ...
+                'FontSize', MainGuiStyle.FONT, 'BackgroundColor', MainGuiStyle.col().panel, ...
+                'HorizontalAlignment', 'left');
             obj.loadView = ViewLoad(obj, controller, categoryToSave);
-            heights = [obj.saveView.height, 20, obj.loadView.height];
+            heights = [obj.saveView.height, 16, obj.loadView.height];
             widths = [obj.saveView.width, obj.loadView.width];
-            
             set(vbox, 'Heights', heights);
-            set(vbox, 'Padding', 5);
-            set(vbox, 'Spacing', 5);
             
-            obj.height = sum(heights) + length(heights) * 8;
+            obj.height = MainGuiStyle.sectionHeight(MainGuiStyle.rowsHeight(heights));
             obj.width = max(widths);
-            panel.height = obj.height;
             
             % Dispaly current file name and status
             saveload = SaveLoad.getInstance('image');
@@ -62,13 +59,13 @@ classdef ViewSaveLoad < GuiComponent & EventListener
         function refresh(obj, fileName, status)
             if isnan(fileName)
                 % No new file could be loaded
-                toDisplay = sprintf('File Name -');
+                toDisplay = 'No file';
             elseif ischar(fileName) && ischar(status)
-                toDisplay = sprintf('File Name - %s (%s)', fileName, status);
+                toDisplay = sprintf('File: %s   (%s)', fileName, status);
             elseif ischar(fileName)
-                toDisplay = sprintf('File Name - %s', fileName);
+                toDisplay = sprintf('File: %s', fileName);
             elseif ischar(status)
-                toDisplay = sprintf('File Name - %s', status);
+                toDisplay = sprintf('File: %s', status);
             end
             obj.tvFileName.String = toDisplay;
             obj.tvFileName.ForegroundColor = obj.statusColor(status);

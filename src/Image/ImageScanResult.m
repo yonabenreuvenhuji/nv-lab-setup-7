@@ -16,6 +16,24 @@ classdef ImageScanResult < Savable & EventSender & EventListener
         mLabelBot       % string
         mLabelLeft      % string
         mHist = []      % double. Scan lifetime results.
+        mThirdAxis = [] % vector. The slice axis of a 3D scan (mAxesString(3)); [] otherwise
+        mSterr = []     % double, like mData: each point's standard error, when the detector gives one (photodiode)
+    end
+
+    properties
+        % 3D scans: which slice is shown, and how
+        sliceIndex = 1          % integer. Slice shown (index into mThirdAxis)
+        sliceFollow = true      % logical. Show the slice being scanned (set false when the user picks one)
+        sliceView = 1           % integer. Index in SLICE_VIEW_OPTIONS
+    end
+
+    properties (Access = private, Transient)
+        lastLabel = ''          % colour-bar label of the image on screen (see updateImageInPlace)
+        lastAxesLabels = {}     % its axis labels
+    end
+
+    properties (SetAccess = private, Transient, Hidden)
+        lastUpdateFull = true   % the last update redrew everything (which also resets the mouse mode)
     end
     
     properties (Access = private) % For plotting over Image
@@ -52,6 +70,7 @@ classdef ImageScanResult < Savable & EventSender & EventListener
         CURSOR_OPTIONS = {'Marker', 'Zoom', 'Location'};
         CONTRAST_OPTIONS = {'Difference', 'Ratio', 'Without MW', 'With MW'};
         IMAGE_OPTIONS = {'kcps', 'Lifetime'};
+        SLICE_VIEW_OPTIONS = {'One slice', 'Maximum over slices', 'Mean over slices'};
     end
     
     methods
@@ -92,6 +111,28 @@ classdef ImageScanResult < Savable & EventSender & EventListener
                     obj.mHist = [];
                 end
 
+                % Per-point standard errors (2026-11), when the detector gives them
+                if isfield(newStruct, 'mSterr') && isequal(size(newStruct.mSterr), size(obj.mData))
+                    obj.mSterr = newStruct.mSterr;
+                else
+                    obj.mSterr = [];
+                end
+
+                % 3D scans (2026-11): the slice axis, and the slice being scanned
+                if isfield(newStruct, 'mThirdAxis') && obj.mDimNumber == 3
+                    obj.mThirdAxis = newStruct.mThirdAxis;
+                else
+                    obj.mThirdAxis = [];
+                end
+                if obj.mDimNumber == 3
+                    if isfield(newStruct, 'scanningSlice') && ~isempty(newStruct.scanningSlice) && obj.sliceFollow
+                        obj.sliceIndex = newStruct.scanningSlice;
+                    elseif isfield(newStruct, 'sliceIndex') && ~isempty(newStruct.sliceIndex)
+                        obj.sliceIndex = newStruct.sliceIndex;     % a saved file: the slice it was saved at
+                    end
+                    obj.sliceIndex = min(max(1, round(obj.sliceIndex)), max(1, numel(obj.mThirdAxis)));
+                end
+
                 % In a previous version we did not save mStageName and
                 % mAxesString. For compatability, we need:
                 if isfield(newStruct, 'mStageName')
@@ -113,20 +154,138 @@ classdef ImageScanResult < Savable & EventSender & EventListener
             end
             
             [data, label] = obj.getDataForPlotting;
-            
+
             % We need to calculate this before sending event (so as to update the header):
             if obj.colormapAuto
-                obj.colormapLimits = obj.calcColormapLimits(data);
+                obj.colormapLimits = obj.calcColormapLimits(obj.dataForColormapLimits(data));
             end
-            
+
+            % Same image as on screen (a scan's next line, another slice, a re-scan of the
+            % same area): only swap the pixels, so a zoom or pan the user made stays.
+            if obj.updateImageInPlace(data, label)
+                obj.lastUpdateFull = false;
+                obj.styleAxes();
+                if obj.mDimNumber > 1
+                    obj.applyColormapLimits();
+                end
+                obj.sendEventImageUpdated();
+                return
+            end
+            obj.lastUpdateFull = true;
+
             switch obj.mDimNumber
-                case 2
-                    AxesHelper.fill(obj.gAxes, data, obj.mDimNumber, obj.mFirstAxis, obj.mSecondAxis, obj.mLabelBot, obj.mLabelLeft, [], label);
+                case {2, 3}     % 3D: one slice (or a projection) is shown as a 2D image
+                    AxesHelper.fill(obj.gAxes, data, 2, obj.mFirstAxis, obj.mSecondAxis, obj.mLabelBot, obj.mLabelLeft, [], label);
                 case 1
-                    AxesHelper.fill(obj.gAxes, data, obj.mDimNumber, obj.mFirstAxis, obj.mSecondAxis, obj.mLabelBot, label);
+                    % with error bars when the detector gave them (fitStyle's look: same hue, no caps)
+                    yLabel = label;
+                    if strcmp(label, Spcm.signalUnits())
+                        yLabel = sprintf('signal (%s)', label);     % not just 'V'
+                    end
+                    AxesHelper.fill(obj.gAxes, data, obj.mDimNumber, obj.mFirstAxis, obj.mSecondAxis, obj.mLabelBot, yLabel, ...
+                        obj.errorsForPlotting(data));
+                    ExpPlotStyle.apply(obj.gAxes, 1, obj.mFirstAxis);   % the experiment plots' look
             end
+            obj.lastLabel = label;
+            obj.lastAxesLabels = {obj.mLabelBot, obj.mLabelLeft};
+            obj.styleAxes();
+            MainGuiStyle.makeInteractive(obj.gAxes);    % (a full redraw replaces the axes toolbar)
             obj.sendEventImageUpdated();
             obj.imagePostProcessing;
+        end
+
+        function tf = updateImageInPlace(obj, data, label)
+            % Put new pixels (points) into the image (trace) already drawn, if it is the
+            % same one: same size, same axes, same labels
+            tf = false;
+            if isempty(obj.gAxes) || ~isgraphics(obj.gAxes) || ~strcmp(label, obj.lastLabel) ...
+                    || ~isequal(obj.lastAxesLabels, {obj.mLabelBot, obj.mLabelLeft})
+                return
+            end
+            if obj.mDimNumber == 1
+                x = obj.mFirstAxis(:)';
+                series = findobj(obj.gAxes, 'Type', 'errorbar', '-or', 'Type', 'line');
+                series = series(arrayfun(@(g) numel(g.XData) == numel(x), series));
+                if numel(series) ~= 1 || numel(x) < 3 || numel(data) ~= numel(x) ...
+                        || any(abs(series.XData - x) > 1e-9)
+                    return
+                end
+                err = obj.errorsForPlotting(data);
+                if isempty(err) == strcmp(series.Type, 'errorbar'); return; end    % bars appeared / went: redraw
+                series.YData = data(:)';
+                if ~isempty(err)
+                    set(series, 'YNegativeDelta', err(:)', 'YPositiveDelta', err(:)');
+                end
+                tf = true;
+                return
+            end
+            if ~any(obj.mDimNumber == [2 3]); return; end
+            img = findobj(obj.gAxes, 'Type', 'image');
+            if numel(img) ~= 1 || ~isequal(size(img.CData), size(data)); return; end
+            x = img.XData; y = img.YData;
+            if isempty(obj.mFirstAxis) || isempty(obj.mSecondAxis) ...
+                    || abs(x(1) - obj.mFirstAxis(1)) > 1e-9 || abs(x(end) - obj.mFirstAxis(end)) > 1e-9 ...
+                    || abs(y(1) - obj.mSecondAxis(1)) > 1e-9 || abs(y(end) - obj.mSecondAxis(end)) > 1e-9
+                return
+            end
+            img.CData = data;
+            tf = true;
+        end
+
+        function applyColormapLimits(obj)
+            try
+                clim(obj.gAxes, obj.colormapLimits);
+            catch
+                clim(obj.gAxes, 'auto');
+            end
+        end
+
+        function showSlice(obj, k)
+            % 3D scans: show slice k (the user picked it, so stop following the scan)
+            if obj.mDimNumber ~= 3 || isempty(obj.mThirdAxis); return; end
+            obj.sliceIndex = min(max(1, round(k)), numel(obj.mThirdAxis));
+            obj.sliceFollow = false;
+            obj.update;
+        end
+
+        function setSliceView(obj, viewIndex)
+            obj.sliceView = viewIndex;
+            obj.update;
+        end
+
+        function styleAxes(obj)
+            % The main window's look for the scan image: secondary ink, ticks out
+            if isempty(obj.gAxes) || ~isgraphics(obj.gAxes); return; end
+            C = ExpPlotStyle.col();
+            set(obj.gAxes, 'FontSize', 9, 'XColor', C.ink2, 'YColor', C.ink2, 'TickDir', 'out', 'Box', 'off');
+            try
+                cb = obj.gAxes.Colorbar;
+                if ~isempty(cb)
+                    set(cb, 'Color', C.ink2, 'FontSize', 9, 'TickDirection', 'out', 'Box', 'off');
+                end
+            catch
+            end
+            if obj.mDimNumber == 3 && ~isempty(obj.mThirdAxis)
+                t = sprintf('%s = %s %s   (slice %d of %d)', obj.mAxesString(3), ...
+                    MainGuiStyle.num(obj.mThirdAxis(obj.sliceIndex), 3), MainGuiStyle.micron, ...
+                    obj.sliceIndex, numel(obj.mThirdAxis));
+                if obj.sliceView > 1
+                    t = sprintf('%s over %d %s slices', obj.SLICE_VIEW_OPTIONS{obj.sliceView}, ...
+                        numel(obj.mThirdAxis), obj.mAxesString(3));
+                end
+                title(obj.gAxes, t, 'FontWeight', 'normal', 'FontSize', 9, 'Color', C.ink);
+            else
+                title(obj.gAxes, '');
+            end
+        end
+
+        function data = dataForColormapLimits(obj, shown)
+            % Auto colour limits. A 3D scan uses all its slices, so that stepping through
+            % the slices compares like with like.
+            data = shown;
+            if obj.mDimNumber == 3 && obj.sliceView == 1 && obj.imageType == 1
+                data = obj.contrastOf(obj.mData, 3);
+            end
         end
         
         function imagePostProcessing(obj)
@@ -140,7 +299,7 @@ classdef ImageScanResult < Savable & EventSender & EventListener
                         % Not available anymore
                         obj.plotStyle = 2;
                     end
-                case 2
+                case {2, 3}
                     styleOptions = obj.PLOT_STYLE_OPTIONS_2D;
                     % Switching from 1D to 2D will get us in Equal axes.
                     % Not great, but to worth fixing, for now.
@@ -154,9 +313,9 @@ classdef ImageScanResult < Savable & EventSender & EventListener
             colormap(obj.gAxes, colormapName)
             
             data = obj.getDataForPlotting;
-            
+
             if obj.colormapAuto
-                obj.colormapLimits = obj.calcColormapLimits(data);
+                obj.colormapLimits = obj.calcColormapLimits(obj.dataForColormapLimits(data));
             end
             
             try
@@ -171,7 +330,7 @@ classdef ImageScanResult < Savable & EventSender & EventListener
             try     % This will not happen without an operating stage
                 stage = getObjByName(obj.mStageName);
                     if isempty(stage); throwBaseObjException(obj.mStageName); end
-                pos = stage.Pos(obj.mAxesString);
+                pos = stage.Pos(obj.imageAxesString);
                 % Draw
                 if isempty(obj.cursor)
                     % If current cursor does not exist (for some reason)
@@ -194,35 +353,14 @@ classdef ImageScanResult < Savable & EventSender & EventListener
         function [data, label] = getDataForPlotting(obj)
             switch obj.imageType
                 case 1 % Normal intensity image (kcps from a counter, V from the photodiode)
-                    units = Spcm.signalUnits();
-                    label = units;
-                    if size(obj.mData, obj.mDimNumber + 1) == 2 % Contrast Image
-                        switch obj.mDimNumber
-                            case 2
-                                withoutMW = obj.mData(:,:,1);
-                                withMW = obj.mData(:,:,2);
-                            case 1
-                                withoutMW = obj.mData(:,1);
-                                withMW = obj.mData(:,2);
-                        end
-                        switch obj.contrastType
-                            case 1 % Difference
-                                data = withoutMW - withMW;
-                                label = [units ' difference'];
-                            case 2 % Ratio
-                                data = withMW./withoutMW;
-                                label = 'ratio (with MW / without MW)';     % dimensionless
-                            case 3 % Without MW
-                                data = withoutMW;
-                            case 4 % With MW
-                                data = withMW;
-                        end
+                    if obj.mDimNumber == 3
+                        [data, label] = obj.contrastOf(obj.sliceOrProjection, 2);
                     else
-                        data = obj.mData;
+                        [data, label] = obj.contrastOf(obj.mData, obj.mDimNumber);
                     end
                 case 2 % Lifetime image
                     label = 'ns';
-                    if isempty(obj.mHist) % Just incase it is some leftover, switch back to normal kcps image.
+                    if isempty(obj.mHist) || obj.mDimNumber == 3 % Just incase it is some leftover, switch back to normal kcps image.
                         obj.imageType = 1;
                         [data, label] = getDataForPlotting(obj);
                         return
@@ -259,6 +397,77 @@ classdef ImageScanResult < Savable & EventSender & EventListener
             end
         end
         
+        function [data, label] = contrastOf(obj, raw, nDim)
+            % The quantity shown, from raw data whose dimension nDim+1 holds [without MW,
+            % with MW] in a MW contrast scan (and is a singleton otherwise).
+            units = Spcm.signalUnits();
+            label = units;
+            if size(raw, nDim + 1) ~= 2
+                data = raw;
+                return
+            end
+            idx = repmat({':'}, 1, nDim);
+            withoutMW = raw(idx{:}, 1);
+            withMW = raw(idx{:}, 2);
+            switch obj.contrastType
+                case 1 % Difference
+                    data = withoutMW - withMW;
+                    label = [units ' difference'];
+                case 2 % Ratio
+                    data = withMW./withoutMW;
+                    label = 'ratio (with MW / without MW)';     % dimensionless
+                case 3 % Without MW
+                    data = withoutMW;
+                otherwise % With MW
+                    data = withMW;
+            end
+        end
+
+        function err = errorsForPlotting(obj, data)
+            % Error bars for a 1D scan: each point's standard error, when the detector gave
+            % them (the photodiode does; photon counters do not) and the plot shows the
+            % measured values themselves (not a MW-contrast difference or ratio). [] = none.
+            err = [];
+            if obj.mDimNumber ~= 1 || obj.imageType ~= 1 || size(obj.mData, 2) ~= 1 ...
+                    || numel(obj.mSterr) ~= numel(data) || ~any(isfinite(obj.mSterr(:)))
+                return
+            end
+            err = obj.mSterr(:);
+        end
+
+        function e = errorAt(obj, row, col)
+            % A 2D pixel's standard error (NaN when unknown), for its data tip
+            e = NaN;
+            if obj.mDimNumber == 2 && obj.imageType == 1 && size(obj.mData, 3) == 1 ...
+                    && isequal(size(obj.mSterr), size(obj.mData)) && row <= size(obj.mSterr, 1) && col <= size(obj.mSterr, 2)
+                e = obj.mSterr(row, col);
+            end
+        end
+
+        function raw = sliceOrProjection(obj)
+            % 3D scans: the slice shown, or the maximum / mean over all slices, as
+            % [rows x cols (x 2 with MW contrast)]
+            vol = obj.mData;
+            k = min(max(1, obj.sliceIndex), size(vol, 3));
+            switch obj.sliceView
+                case 2
+                    raw = max(vol, [], 3, 'omitnan');
+                case 3
+                    raw = mean(vol, 3, 'omitnan');
+                otherwise
+                    raw = vol(:, :, k, :);
+            end
+            raw = reshape(raw, size(vol, 1), size(vol, 2), []);
+        end
+
+        function s = imageAxesString(obj)
+            % The axes drawn in the image: the scan axes, without the slice axis of a 3D scan
+            s = obj.mAxesString;
+            if obj.mDimNumber == 3 && numel(s) >= 2
+                s = s(1:2);
+            end
+        end
+
         %%%% Data Cursor methods %%%%
         function clearCursorData(obj)
             % Clear the cursor data between passing from one cursor type to
@@ -338,14 +547,20 @@ classdef ImageScanResult < Savable & EventSender & EventListener
                 actionIndex = find(strcmp(action, obj.CURSOR_OPTIONS));
             end
             switch actionIndex
-                case 1      % Display cursor with specific data tip
-                    set(obj.cursor, 'Enable', 'on')
+                case 1      % Inspect: zoom, pan, data tips (hover, or click to pin)
+                    % No figure mode: the data-cursor MODE (on here before) turns zoom and
+                    % pan off in every plot of the window. Data tips come from the plots'
+                    % own interactions and the axes toolbar, with this text.
+                    set(obj.cursor, 'Enable', 'off')
                     obj.cursor.UpdateFcn = @obj.cursorMarkerDisplay;
+                    set([obj.gAxes; obj.gAxes.Children], 'ButtonDownFcn', '');
+                    MainGuiStyle.makeInteractive(obj.gAxes);
                 case 2      % Create a rectangle on the selected area, and update the GUI scanParams's min and max values accordingly
                     obj.clearCursorData;
                     obj.updataDataByZoom;
                 case 3      % Move the stage to selected location
                     set(obj.cursor, 'Enable', 'off')
+                    try; disableDefaultInteractivity(obj.gAxes); catch; end   % a click moves the stage, not a data tip
                     set([obj.gAxes; obj.gAxes.Children], 'ButtonDownFcn', @obj.setLocationFromCursor);
             end
         end
@@ -359,7 +574,16 @@ classdef ImageScanResult < Savable & EventSender & EventListener
             
             imageScanResult = getObjByName(ImageScanResult.NAME);
             if isempty(imageScanResult); throwBaseObjException(ImageScanResult.NAME); end
-            
+
+            % The data-tip text is set for the whole window: a tip on another plot (the
+            % photodiode trace) gets plain x / y
+            target = ancestor(get(event_obj, 'Target'), 'axes');
+            if ~isequal(target, obj.gAxes)
+                pos = event_obj.Position;
+                txt = {sprintf('x: %.4g', pos(1)), sprintf('y: %.4g', pos(2))};
+                return
+            end
+
             if ~imageScanResult.isDataAvailable
                 txt = '';
                 EventStation.anonymousWarning('Image is empty');
@@ -368,24 +592,40 @@ classdef ImageScanResult < Savable & EventSender & EventListener
             
             % Get scanning parameters
             dim = imageScanResult.mDimNumber;
-            scanAxes = imageScanResult.mAxesString;
+            scanAxes = imageScanResult.imageAxesString;
             firstAxis = scanAxes(1);	% char (either 'x', 'y' or 'z')
             secondAxis = scanAxes(end); % char (either 'x', 'y' or 'z')
             
             % Customizes text of data tips
-            data = getimage(obj.gAxes);
-            [~, label] = imageScanResult.getDataForPlotting;
+            [data, label] = imageScanResult.getDataForPlotting;
             pos = event_obj.Position;
-            
+
             % %.4g, not %.1f: a photodiode reads tens of mV, and %.1f printed 0.05 V as "0.1".
+            % "± error" when the point's standard error is known
+            pm = @(e) BooleanHelper.ifTrueElse(isfinite(e), sprintf(' %s %.2g', char(177), e), '');
             if dim == 1
-                txt = sprintf('%s = %.3f\n%.4g %s', firstAxis, pos(1), pos(2), label);
+                err = imageScanResult.errorsForPlotting(data);
+                e = NaN;
+                if ~isempty(err)
+                    [~, k] = min(abs(imageScanResult.mFirstAxis - pos(1)));
+                    e = err(k);
+                end
+                txt = sprintf('%s = %.3f\n%.4g%s %s', firstAxis, pos(1), pos(2), pm(e), label);
             else
-                dataIndex = get(event_obj, 'DataIndex');
-                level = data(dataIndex);
-                txt = {sprintf('(%s,%s) = (%.3f, %.3f)\n%.4g %s', ...
+                % The pixel under the tip (getimage needed the Image Processing Toolbox)
+                [~, col] = min(abs(imageScanResult.mFirstAxis - pos(1)));
+                [~, row] = min(abs(imageScanResult.mSecondAxis - pos(2)));
+                level = NaN;
+                if row <= size(data, 1) && col <= size(data, 2)
+                    level = data(row, col);
+                end
+                txt = {sprintf('(%s,%s) = (%.3f, %.3f)\n%.4g%s %s', ...
                     firstAxis, secondAxis,...
-                    pos(1), pos(2), level, label)};
+                    pos(1), pos(2), level, pm(imageScanResult.errorAt(row, col)), label)};
+                if dim == 3 && imageScanResult.sliceView == 1 && ~isempty(imageScanResult.mThirdAxis)
+                    txt = {sprintf('%s\n%s = %.3f (slice %d)', txt{1}, imageScanResult.mAxesString(3), ...
+                        imageScanResult.mThirdAxis(imageScanResult.sliceIndex), imageScanResult.sliceIndex)};
+                end
             end
         end
         
@@ -405,7 +645,7 @@ classdef ImageScanResult < Savable & EventSender & EventListener
             if rect(3) == 0; return; end  % Selection has no width. No use in continuing
             
             % Draw, according to the dimensions of the image
-            dim = obj.mDimNumber;
+            dim = min(obj.mDimNumber, 2);   % a 3D scan shows a 2D slice
             switch dim
                 case 1
                     obj.drawLimitBar(rect);
@@ -425,7 +665,7 @@ classdef ImageScanResult < Savable & EventSender & EventListener
             assert(stage.isScannable)
             
             for i = 1:dim
-                axisIndex = stage.getAxis(obj.mAxesString(i));
+                axisIndex = stage.getAxis(obj.imageAxesString(i));
                 
                 stage.scanParams.from(axisIndex) = rect(i);            % rect(1)==horizontal position, rect(2)==vertical position
                 stage.scanParams.to(axisIndex) = rect(i)+rect(i+2);    % rect(3)==width;	rect(4)==height
@@ -479,11 +719,11 @@ classdef ImageScanResult < Savable & EventSender & EventListener
                 end
                 if ~isfield(obj.crosshairs, 'xLineHandle') || ~isvalid(obj.crosshairs.xLineHandle)
                     obj.crosshairs.xLineHandle = line(obj.gAxes, ...
-                        [0 0], [0 0], 'Color', 'b', 'LineWidth', 0.5, 'HitTest', 'Off');
+                        [0 0], [0 0], 'Color', ExpPlotStyle.col().fit, 'LineWidth', 1.2, 'HitTest', 'Off');
                 end
                 if ~isfield(obj.crosshairs, 'yLineHandle') || ~isvalid(obj.crosshairs.yLineHandle)
                     obj.crosshairs.yLineHandle = line(obj.gAxes, ...
-                        [0 0], [0 0], 'Color', 'b', 'LineWidth', 0.5, 'HitTest', 'Off');
+                        [0 0], [0 0], 'Color', ExpPlotStyle.col().fit, 'LineWidth', 1.2, 'HitTest', 'Off');
                 end
                 
                 hold(obj.gAxes,'off'); % Allow picture to change when needed
@@ -517,7 +757,7 @@ classdef ImageScanResult < Savable & EventSender & EventListener
                         obj.crosshairs.arrowHandle = line(obj.gAxes, ...
                         [0 0], [0 0], 'Color', 'k', 'LineWidth', 1, 'HitTest', 'Off', 'MarkerSize', 10);
                     else
-                        obj.crosshairs.arrowHandle = quiver(obj.gAxes, 0, 0, 0, 0, 'Color', 'b', ...
+                        obj.crosshairs.arrowHandle = quiver(obj.gAxes, 0, 0, 0, 0, 'Color', ExpPlotStyle.col().fit, ...
                         'LineWidth', 1, 'MaxHeadSize', 10, 'HitTest', 'Off');
                     end
                 end
@@ -575,10 +815,16 @@ classdef ImageScanResult < Savable & EventSender & EventListener
             % Get everything we need
             stage = getObjByName(obj.mStageName);
             if isempty(stage); throwBaseObjException(obj.mStageName); end
-            pos = obj.gAxes.CurrentPoint(1, 1:obj.mDimNumber);
+            pos = obj.gAxes.CurrentPoint(1, 1:min(obj.mDimNumber, 2));
+            axesToMove = obj.imageAxesString;
+            if obj.mDimNumber == 3 && obj.sliceView == 1 && ~isempty(obj.mThirdAxis)
+                % A slice of a 3D scan: go to that slice too
+                axesToMove = obj.mAxesString;
+                pos(3) = obj.mThirdAxis(obj.sliceIndex);
+            end
 
             % Now move to the corresponding location
-            stage.move(obj.mAxesString, pos);    % This should update the datacursor, by relevant event
+            stage.move(axesToMove, pos);    % This should update the datacursor, by relevant event
         end
         
         %% Helper methods
@@ -621,7 +867,7 @@ classdef ImageScanResult < Savable & EventSender & EventListener
             end
 
             newAxes = copyobj(obj.gAxes, fig);
-            if obj.mDimNumber == 2
+            if obj.mDimNumber >= 2
                 c = colorbar(newAxes);
                 [~, label] = obj.getDataForPlotting;
                 xlabel(c, label)
@@ -690,14 +936,16 @@ classdef ImageScanResult < Savable & EventSender & EventListener
         
         function limits = calcColormapLimits(data)
             % Calculate auto-limits from data.
-            if all(isinf(data(:))) || all(data(:) == 0)
-                limits = [0 0];     % No information.
+            % (NaN: a 3D scan's slices not scanned yet)
+            data = data(isfinite(data) & data ~= 0);
+            if isempty(data)
+                limits = [0 1];     % No information.
                 return
             end
-            
-            maxValue = max(max(data(~isinf(data))));
-            minValue = min(min(data(data ~= 0)));
-            limits = [minValue maxValue];
+            limits = [min(data) max(data)];
+            if limits(2) <= limits(1)
+                limits = limits(1) + [-0.5 0.5] * max(abs(limits(1)), 1) * 1e-3;
+            end
         end
         
         function newStruct = ScanStructToInternal(scanStruct)
@@ -711,9 +959,20 @@ classdef ImageScanResult < Savable & EventSender & EventListener
             newStruct.mAxesString = scanStruct.axesString;
             newStruct.mLabelBot = scanStruct.botLabel;
             newStruct.mLabelLeft = scanStruct.leftLabel;
+            newStruct.mThirdAxis = scanStruct.getThirdAxis;
+            newStruct.scanningSlice = [];
             if isprop(scanStruct, 'scanExtraInfo')
                 if isfield(scanStruct.scanExtraInfo, 'hist')
                     newStruct.mHist = scanStruct.scanExtraInfo.hist;
+                end
+                if isfield(scanStruct.scanExtraInfo, 'sliceIndex')
+                    newStruct.scanningSlice = scanStruct.scanExtraInfo.sliceIndex;
+                end
+                if isfield(scanStruct.scanExtraInfo, 'livePixel')
+                    newStruct.livePixel = true;
+                end
+                if isfield(scanStruct.scanExtraInfo, 'sterr')
+                    newStruct.mSterr = scanStruct.scanExtraInfo.sterr;
                 end
             end
         end
@@ -861,6 +1120,7 @@ classdef ImageScanResult < Savable & EventSender & EventListener
                     && isfield(event.extraInfo, StageScanner.EVENT_SCAN_STARTED)
                 % We might need to change our reference stage
                 obj.mStageName = event.creator.mStageName;
+                obj.sliceFollow = true;     % a new scan: show the slice being scanned
                 % Make sure the cursor is in marker mode
                 obj.updateDataCursor;
             end
@@ -876,7 +1136,11 @@ classdef ImageScanResult < Savable & EventSender & EventListener
                 % but we want it in the in-house format
                 extraInternal = obj.ScanStructToInternal(extra);
                 obj.update(extraInternal);
-                drawnow
+                if isfield(extraInternal, 'livePixel') && extraInternal.livePixel
+                    drawnow limitrate nocallbacks   % mid-line: clicks wait for the end of the line
+                else
+                    drawnow
+                end
                 return % To avoid drawing crosshairs twice
             end
             
@@ -895,7 +1159,7 @@ classdef ImageScanResult < Savable & EventSender & EventListener
                 if isempty(stage)
                     % Probably, there is nothing to draw on. Moving on!
                 else
-                    physAxes = obj.mAxesString;
+                    physAxes = obj.imageAxesString;
                     pos = stage.Pos(physAxes);
                     limits = axis(obj.gAxes);   % vector of [x_min x_max y_min y_max]
                     obj.drawCrosshairs(limits, pos)

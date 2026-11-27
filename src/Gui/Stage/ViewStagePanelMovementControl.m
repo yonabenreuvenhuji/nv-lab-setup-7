@@ -1,297 +1,295 @@
 classdef ViewStagePanelMovementControl < GuiComponent & EventListener
-    %VIEWSTAGESCANSCAN Summary of this class goes here
-    %   Detailed explanation goes here
-    
-    properties
-        btnMoveLeft         % 1x3 button
-        btnMoveRight        % 1x3 button
-        btnMoveStageToFixedPos  % button
-        
-        btnSendToFixed      % button
-        btnMoveToBlue       % button
-        isBlueMovingAvailable   % logical
-        
-        edtSteps            % edit-text 
-        btnHaltStage        % button
-        cbxJoystick         % checkbox
+    %VIEWSTAGEPANELMOVEMENTCONTROL The "Position" section: where the stage is, and moving it.
+    %
+    %   Axis   −   Position (µm)   +   Target (µm)  |  Step (µm) [ 1 ]  0.1  1  10  100
+    %    X    [−]  [  12.345  ]   [+]  [        ]   |  [ Go to target ]  [ Clear ]
+    %    Y    ...                                   |  [ ↶ Back ]        [ HALT  ]
+    %   Saved positions [ NV1 (12.3, -8.1, 0) ▾]  [Go]  [Save current…]  [Delete]
+    %
+    % TARGETS. Typing a position in an axis' Target field (and Enter) makes it pending: the
+    % field turns amber, and "Go to target" lights up. Go moves every pending axis at once,
+    % then clears the targets. Clear (or emptying the field) drops them. This replaces the
+    % old "click the position, type into the blue box, press Move To Blue", where the
+    % target was a pale blue field that only appeared after a click and was easy to miss.
+    %
+    % BACK returns to where the stage was before the last move made from this section
+    % (arrows, Go, saved positions). SAVED POSITIONS are kept between MATLAB sessions
+    % (MATLAB preferences, per stage).
 
-        tvCurPos            % 1x3 text-view for current position
-        edtCurPos           % 1x3 edit-input for current position input
-        hboxCurPos          % 1x3 vbox that holds those ^ 2 views
-        
-        edtCurPosValue      % 1x3 double that holds the values in edtCurPos. 
-                            % when an edt is visible, this always holds the
-                            % numeric value shown. if it's invisible, this
-                            % always stores Infinity
-        
+    properties
+        btnMinus            % 1xN button: one step down
+        btnPlus             % 1xN button: one step up
+        tvPos               % 1xN read-only position
+        edtTarget           % 1xN target field
+        edtStep             % edit
+        btnStepPreset       % buttons
+        btnGo               % move to the targets
+        btnClear            % clear the targets
+        btnBack             % back to the previous position
+        btnHaltStage        % halt
+        popSaved            % saved positions
+        btnSavedGo
+        btnSavedAdd
+        btnSavedDelete
+        cbxJoystick         % checkbox (stages with a joystick)
+
         stageName           % string
-        stageAxes           % string. example: "xy"    end
+        stageAxes           % string, e.g. 'xyz'
     end
-    
+
+    properties (Access = private)
+        targets             % 1xN double, NaN = no target
+        history = zeros(0, 3)   % previous positions (rows), most recent last
+    end
+
+    properties (Constant)
+        STEP_PRESETS = [0.1 1 10 100]   % um
+        HISTORY_LENGTH = 30
+        PREF_GROUP = 'nvLabMainGui'
+    end
+
     methods
         function obj = ViewStagePanelMovementControl(parent, controller, stage)
             expNames = Experiment.getExperimentNames();
-            namesToListenTo = {stage.name, expNames{:}, StageScanner.NAME}; %#ok<CCAT>
-            
+            namesToListenTo = [{stage.name}, expNames(:)', {StageScanner.NAME}];
             obj@GuiComponent(parent, controller);
             obj@EventListener(namesToListenTo);
             obj.stageName = stage.name;
             obj.stageAxes = stage.availableAxes;
-            axesLen = length(obj.stageAxes);
-            
-            %%%% panel init %%%%
-            panelMain = uix.Panel('Parent', parent.component, 'Title', 'Movement Control', 'Padding', 5);
-            hboxMain = uix.HBox('Parent', panelMain, 'Spacing', 25, 'Padding', 0);
-            vboxLeft = uix.VBox('Parent',hboxMain, 'Spacing', 6); % will contain the grid and "step"
-            
-            
-            %%%% step %%%%
-            hboxStep = uix.HBox('Parent', vboxLeft, 'Spacing', 5);
-            uicontrol(obj.PROP_LABEL{:}, 'Parent', hboxStep, 'String', 'Step:');
-            obj.edtSteps = uicontrol(obj.PROP_EDIT{:}, 'Parent', hboxStep);
-            hboxStep.Widths = [-1 -1];
-            stepHeightNoSpacing = 25;
-            
-            
-            %%%% the left side grid %%%%
-            gridLeftSide = uix.Grid('Parent', vboxLeft, 'Spacing', 5);
-            
-            % 1st column: xyz labels
-            for i = 1: axesLen
-                uicontrol(obj.PROP_LABEL{:}, 'Parent', gridLeftSide, 'String', upper(obj.stageAxes(i)));
+            n = length(obj.stageAxes);
+            obj.targets = nan(1, n);
+            S = MainGuiStyle;
+            um = MainGuiStyle.micron;
+
+            [panel, inner] = MainGuiStyle.section(parent.component, 'Position');
+            obj.component = panel;
+
+            %%%% Top: axes (left) | step and actions (right) %%%%
+            top = MainGuiStyle.hbox(inner, 14);
+            grid = MainGuiStyle.grid(top, 4);
+            % column 1: axis
+            MainGuiStyle.empty(grid);
+            for i = 1:n; MainGuiStyle.axisTag(grid, obj.stageAxes(i)); end
+            % column 2: minus
+            MainGuiStyle.empty(grid);
+            obj.btnMinus = gobjects(1, n);
+            for i = 1:n
+                obj.btnMinus(i) = MainGuiStyle.button(grid, char(8722), 'normal', 'FontSize', 12, ...
+                    'TooltipString', sprintf('Move %s down by one step', upper(obj.stageAxes(i))));
             end
-            
-            % 2nd column: arrow left
-            obj.btnMoveLeft = gobjects(1, axesLen);
-            for i = 1: axesLen
-                obj.btnMoveLeft(i) = uicontrol(obj.PROP_BUTTON{:}, ...
-                    'Parent', gridLeftSide, ...
-                    'String', StringHelper.LEFT_ARROW, ...
-                    'FontSize', 20);
+            % column 3: position
+            MainGuiStyle.header(grid, sprintf('Position (%s)', um));
+            obj.tvPos = gobjects(1, n);
+            for i = 1:n
+                obj.tvPos(i) = MainGuiStyle.readout(grid, '', ...
+                    'TooltipString', sprintf('Where the stage is now (%s axis)', upper(obj.stageAxes(i))));
             end
-            
-            % 3rd column: current position
-            obj.tvCurPos = gobjects(1, axesLen);
-            obj.edtCurPos = gobjects(1, axesLen);
-            obj.hboxCurPos = gobjects(1, axesLen);
-            obj.edtCurPosValue = inf * ones(1, axesLen);
-            canScan = stage.isScannable;
-            % ^ We want a local copy of this value 
-            for i = 1: axesLen
-                obj.hboxCurPos(i) = uix.HBox('Parent', gridLeftSide, 'Padding', 0, 'Spacing', 0);
-                obj.tvCurPos(i) = uicontrol(obj.PROP_EDIT{:}, 'Parent', obj.hboxCurPos(i));
-                obj.edtCurPos(i) = uicontrol(obj.PROP_EDIT{:}, 'Parent', obj.hboxCurPos(i), ...
-                    'ForegroundColor', 'blue', 'BackgroundColor', [0.8 0.9 1]);     % Blue over light blue
-                obj.showEdtCurPos(i, false);   % hide the edit-input until it's needed - when user inputs data
+            % column 4: plus
+            MainGuiStyle.empty(grid);
+            obj.btnPlus = gobjects(1, n);
+            for i = 1:n
+                obj.btnPlus(i) = MainGuiStyle.button(grid, '+', 'normal', 'FontSize', 12, ...
+                    'TooltipString', sprintf('Move %s up by one step', upper(obj.stageAxes(i))));
             end
-            
-            % 4th column: arrow right
-            obj.btnMoveRight = gobjects(1, axesLen);
-            for i = 1: axesLen
-                obj.btnMoveRight(i) = uicontrol(obj.PROP_BUTTON{:}, ...
-                    'Parent', gridLeftSide, ...
-                    'String', StringHelper.RIGHT_ARROW, ...
-                    'FontSize', 20);
+            % column 5: target
+            MainGuiStyle.header(grid, sprintf('Target (%s)', um));
+            obj.edtTarget = gobjects(1, n);
+            for i = 1:n
+                obj.edtTarget(i) = MainGuiStyle.edit(grid, '', 'TooltipString', ...
+                    sprintf(['Type a position for %s and press Enter. It turns amber until you press ' ...
+                    '"Go to target"; empty = %s does not move.'], upper(obj.stageAxes(i)), upper(obj.stageAxes(i))));
             end
-            gridWidths = [20 35 70 35];
-            gridWithdsRel = -1*gridWidths;
-            heightGridTotalNoSpacing = 90;
-            lineHeight = heightGridTotalNoSpacing / axesLen;
-            gridHeights = lineHeight * ones(1, axesLen);
-            set(gridLeftSide, 'Widths', gridWithdsRel, 'Heights', gridHeights);
-            gridLeftHeightTotal = heightGridTotalNoSpacing + 5 * axesLen;
-            gridLeftWidthTotal = sum(gridWidths) + 4 * length(gridWidths);
-            
-            %%%% vbox left - all inner components are ready %%%%
-            vboxLeft.Heights = [stepHeightNoSpacing heightGridTotalNoSpacing+10];
-            vboxLeftHeightTotal = gridLeftHeightTotal + stepHeightNoSpacing + 42;
-            
-            
-            %%%% buttons (fix, query, halt) & joystick %%%%
-            vboxRight = uix.VBox('Parent',hboxMain, 'Spacing', 6);
-            obj.btnMoveToBlue = uicontrol(obj.PROP_BUTTON{:}, ...
-                'Parent', vboxRight, ...
-                'String', 'Move To Blue', ...
-                'Enable', 'off', ...       % the starting state - off
-                'TooltipString', 'Move stage to the position appearing in blue');
-            if canScan        % Stage is scannable
-                obj.btnSendToFixed = uicontrol(obj.PROP_BUTTON{:}, ...
-                    'Parent', vboxRight, ...
-                    'String', sprintf('Current %s Fixed', StringHelper.RIGHT_ARROW), ...
-                    'TooltipString', 'Set fixed position to actual stage position');
-                heights = [-5 -5 -5];
-            else
-                heights = [-2 -2];
+            set(grid, 'Widths', [20 30 92 30 92], 'Heights', [S.HEAD_H, S.ROW_H * ones(1, n)]);
+            gridHeight = S.HEAD_H + n*S.ROW_H + 4*n;
+
+            right = MainGuiStyle.vbox(top, S.GAP);
+            stepRow = MainGuiStyle.hbox(right, 4);
+            MainGuiStyle.label(stepRow, sprintf('Step (%s)', um), 'right');
+            obj.edtStep = MainGuiStyle.edit(stepRow, '', 'TooltipString', ...
+                sprintf('How far − and + move (minimum %s %s)', MainGuiStyle.num(stage.STEP_MINIMUM_SIZE), um));
+            obj.btnStepPreset = gobjects(1, numel(obj.STEP_PRESETS));
+            for k = 1:numel(obj.STEP_PRESETS)
+                obj.btnStepPreset(k) = MainGuiStyle.button(stepRow, MainGuiStyle.num(obj.STEP_PRESETS(k)), 'quiet', ...
+                    'TooltipString', sprintf('Step = %s %s', MainGuiStyle.num(obj.STEP_PRESETS(k)), um));
             end
-            obj.btnHaltStage = uicontrol(obj.PROP_BUTTON_BIG_RED{:}, ...
-                'Parent', vboxRight, ...
-                'String', 'Halt Stages');
+            stepRow.Widths = [56 56 -1 -1 -1 -1];
+            goRow = MainGuiStyle.hbox(right, S.GAP);
+            obj.btnGo = MainGuiStyle.button(goRow, 'Go to target', 'normal', 'Enable', 'off', ...
+                'TooltipString', 'Move every axis that has a target (amber) to it, all at once');
+            obj.btnClear = MainGuiStyle.button(goRow, 'Clear', 'quiet', 'Enable', 'off', ...
+                'TooltipString', 'Forget the targets');
+            goRow.Widths = [-2 -1];
+            backRow = MainGuiStyle.hbox(right, S.GAP);
+            obj.btnBack = MainGuiStyle.button(backRow, [char(8630) ' Back'], 'normal', 'Enable', 'off', ...
+                'TooltipString', 'Return to where the stage was before the last move from this section');
+            obj.btnHaltStage = MainGuiStyle.button(backRow, 'Halt', 'stop', ...
+                'TooltipString', 'Stop every stage movement now (also stops a scan)');
+            backRow.Widths = [-1 -1];
+            MainGuiStyle.empty(right);
+            right.Heights = [S.ROW_H S.ROW_H S.ROW_H -1];
+            top.Widths = [sum([20 30 92 30 92]) + 16, -1];
+
+            %%%% Saved positions %%%%
+            savedRow = MainGuiStyle.hbox(inner, S.GAP);
+            MainGuiStyle.label(savedRow, 'Saved positions', 'left');
+            obj.popSaved = MainGuiStyle.popup(savedRow, {'(none saved)'}, ...
+                'TooltipString', 'Positions you saved, kept between sessions');
+            obj.btnSavedGo = MainGuiStyle.button(savedRow, 'Go', 'normal', ...
+                'TooltipString', 'Move the stage to the selected saved position');
+            obj.btnSavedAdd = MainGuiStyle.button(savedRow, 'Save current...', 'normal', ...
+                'TooltipString', 'Save where the stage is now, under a name');
+            obj.btnSavedDelete = MainGuiStyle.button(savedRow, 'Delete', 'quiet', ...
+                'TooltipString', 'Delete the selected saved position');
+            widths = [100 -1 40 100 56];
             if stage.hasJoystick
-                obj.cbxJoystick = uicontrol(obj.PROP_CHECKBOX{:}, ...
-                    'Parent', vboxRight, ...
-                    'String', 'Joystick');
-                joystickHeight = 15;
-                heights = [heights joystickHeight];
+                obj.cbxJoystick = MainGuiStyle.checkbox(savedRow, 'Joystick', false, ...
+                    'Callback', @(h,e) obj.cbxJoystickCallback);
+                widths(end + 1) = 72;
             end
-            vboxRight.Heights = heights;
-            rightSideTotalWidth = 120;
-            
-            %%%% Set mainHbox widths %%%%
-            widthsMain = [gridLeftWidthTotal, rightSideTotalWidth];
-            widthsRelative = widthsMain * -1 ;
-            hboxMain.Widths = widthsRelative;
-            
+            savedRow.Widths = widths;
+
+            inner.Heights = [max(gridHeight, 3*S.ROW_H + 2*S.GAP), S.ROW_H];
+            obj.height = MainGuiStyle.sectionHeight(MainGuiStyle.rowsHeight(inner.Heights));
+            obj.width = 600;
+
             %%%% Callbacks %%%%
-            obj.edtSteps.Callback = @(h,e) obj.edtStepSizeCallback();
-            obj.btnMoveStageToFixedPos.Callback = @(h,e) obj.btnMoveStageToFixedPosCallback();
+            obj.edtStep.Callback = @(h,e) obj.edtStepSizeCallback();
+            for k = 1:numel(obj.STEP_PRESETS)
+                obj.btnStepPreset(k).Callback = @(h,e) obj.setStep(obj.STEP_PRESETS(k));
+            end
+            for i = 1:n
+                obj.btnMinus(i).Callback = @(h,e) obj.btnMoveCallback(i, -1);
+                obj.btnPlus(i).Callback = @(h,e) obj.btnMoveCallback(i, +1);
+                obj.edtTarget(i).Callback = @(h,e) obj.edtTargetCallback(i);
+            end
+            obj.btnGo.Callback = @(h,e) obj.btnGoCallback();
+            obj.btnClear.Callback = @(h,e) obj.clearTargets();
+            obj.btnBack.Callback = @(h,e) obj.btnBackCallback();
             obj.btnHaltStage.Callback = @(h,e) StageControlEvents.sendHalt;
-            obj.cbxJoystick.Callback = @(h,e) obj.cbxJoystickCallback;
-            
-            obj.btnMoveToBlue.Callback = @(h,e) obj.btnMoveToBlueCallback();
-            obj.isBlueMovingAvailable = false; % By default
-            if canScan
-                obj.btnSendToFixed.Callback = @(h,e) obj.btnSendToFixedNonScanableCallback();
-            end
-            
-            for i = 1:axesLen
-                obj.tvCurPos(i).Callback = @(h,e) obj.tvCurPosCallback(i);
-                obj.edtCurPos(i).Callback = @(h,e) obj.checkEdtCurPosValue(i);
-                
-                isLeft = true;
-                obj.btnMoveLeft(i).Callback = @(h,e) obj.btnMoveCallback(i, isLeft);
-                obj.btnMoveRight(i).Callback = @(h,e) obj.btnMoveCallback(i, ~isLeft);
-            end
-            
-            
-            %%%% Internal values %%%%
-            obj.width = sum(widthsMain) + (hboxMain.Spacing -3) * length(widthsMain);
-            obj.height = vboxLeftHeightTotal;
-            
+            obj.btnSavedGo.Callback = @(h,e) obj.btnSavedGoCallback();
+            obj.btnSavedAdd.Callback = @(h,e) obj.btnSavedAddCallback();
+            obj.btnSavedDelete.Callback = @(h,e) obj.btnSavedDeleteCallback();
+
+            obj.refreshSaved();
             obj.refresh();
         end
-        
+
         function refresh(obj)
-            stage = getObjByName(obj.stageName);
-            if isempty(stage); throwBaseObjException(obj.stageName); end
-            
-            obj.edtSteps.String = StringHelper.formatNumber(stage.stepSize);
+            stage = obj.getStage();
+            obj.edtStep.String = MainGuiStyle.num(stage.stepSize, 4);
             currentPosition = stage.Pos(obj.stageAxes);
             for i = 1: length(obj.stageAxes)
-                obj.tvCurPos(i).String = StringHelper.formatNumber(currentPosition(i));
+                obj.tvPos(i).String = sprintf('%.3f', currentPosition(i));
             end
-            
             obj.checkMovementEnabled;
-            
             drawnow % If we are in mid-operation
         end
-        
+    end
+
+    %% Moving
+    methods
         function edtStepSizeCallback(obj)
-            stage = getObjByName(obj.stageName);
-            if isempty(stage); throwBaseObjException(obj.stageName); end
-            
-            stepSizeString = obj.edtSteps.String;
-            try
-                if ~ValidationHelper.isStringValueANumber(stepSizeString)
-                    error('Step size must be a valid number! Reverting.');
-                end
-                if ~ValidationHelper.isStringValueInBorders(stepSizeString, stage.STEP_MINIMUM_SIZE, inf)
-                    error('step size must be >= minimum step-size! reverting.\nminimum step-size: %d, wanted step size: %s', stage.STEP_MINIMUM_SIZE, stepSizeString);
-                end
-            catch err
-                obj.edtSteps.String = StringHelper.formatNumber(stage.stepSize);
-                EventStation.anonymousError(err.message);
+            stage = obj.getStage();
+            stepSizeString = obj.edtStep.String;
+            if ~ValidationHelper.isStringValueANumber(stepSizeString) ...
+                    || ~ValidationHelper.isStringValueInBorders(stepSizeString, stage.STEP_MINIMUM_SIZE, inf)
+                obj.edtStep.String = MainGuiStyle.num(stage.stepSize, 4);
+                EventStation.anonymousWarning('The step must be a number of at least %s %s. Reverting.', ...
+                    MainGuiStyle.num(stage.STEP_MINIMUM_SIZE), MainGuiStyle.micron);
+                return
             end
-            
             stage.stepSize = str2double(stepSizeString);
         end
-        
-        function btnMoveCallback(obj,index,trueForLeftFalseForRight)
-            stage = getObjByName(obj.stageName);
-            if isempty(stage); throwBaseObjException(obj.stageName); end
-            
+
+        function setStep(obj, step)
+            stage = obj.getStage();
+            stage.stepSize = max(step, stage.STEP_MINIMUM_SIZE);
+        end
+
+        function btnMoveCallback(obj, index, direction)
+            stage = obj.getStage();
             phAxis = ClassStage.getAxis(obj.stageAxes(index));
-            step = BooleanHelper.ifTrueElse(trueForLeftFalseForRight,-1,1)*stage.stepSize;
-            stage.relativeMove(phAxis, step);
+            obj.remember();
+            stage.relativeMove(phAxis, direction * stage.stepSize);
         end
-        
-        function btnMoveStageToFixedPosCallback(obj)
-            stage = getObjByName(obj.stageName);
-            if isempty(stage); throwBaseObjException(obj.stageName); end
-            
-            stage.moveByScanParams();
-        end
-        
-        function btnSendToFixedNonScanableCallback(obj)
-            stage = getObjByName(obj.stageName);
-            if isempty(stage); throwBaseObjException(obj.stageName); end
-            
-            stage.sendPosToScanParams();
-            obj.refresh;
-        end
-        
-        function btnMoveToBlueCallback(obj)
-            stage = getObjByName(obj.stageName);
-            if isempty(stage); throwBaseObjException(obj.stageName); end
-            
-            isBeingGrayed = true;
-            for i = 1 : length(obj.stageAxes)
-                obj.btnMoveLeft(i).Enable = 'off';
-                obj.recolor(obj.tvCurPos(i),isBeingGrayed)
-                obj.btnMoveRight(i).Enable = 'off';
-            end
-            
-            for i = 1 : length(obj.stageAxes)
-                phAxis = ClassStage.getAxis(obj.stageAxes(i));
-                pos = obj.edtCurPosValue(i); 
-                if pos ~= inf
-                    stage.move(phAxis, pos);
-                    obj.clearEdtCurPos(i);
-                end 
-            end
-            
-            isBeingGrayed = false;
-            for i = 1 : length(obj.stageAxes)
-                obj.btnMoveLeft(i).Enable = 'on';
-                obj.recolor(obj.tvCurPos(i),isBeingGrayed)
-                obj.btnMoveRight(i).Enable = 'on';
-            end
-            
-            % We are now finished moving. Waiting for new Input.
-            obj.isBlueMovingAvailable = false;
-            obj.btnMoveToBlue.Enable = 'off';
-        end
-        
-        function tvCurPosCallback(obj, index)
-            stage = getObjByName(obj.stageName);
-            if isempty(stage); throwBaseObjException(obj.stageName); end
-            
-            phAxis = ClassStage.getAxis(obj.stageAxes(index));
-            [limNeg, limPos] = stage.ReturnLimits(phAxis);
-            if ValidationHelper.isStringValueInBorders(obj.tvCurPos(index).String, limNeg, limPos)
-                obj.edtCurPos(index).String = obj.tvCurPos(index).String;
-                obj.showEdtCurPos(index, true);
-                obj.checkEdtCurPosValue(index);
-                obj.isBlueMovingAvailable = true;
-                obj.refresh
+
+        function edtTargetCallback(obj, index)
+            % Enter in a target field: check it, mark it pending (or clear it)
+            stage = obj.getStage();
+            str = strtrim(obj.edtTarget(index).String);
+            if isempty(str)
+                obj.targets(index) = NaN;
             else
-                EventStation.anonymousWarning('Position must be a number, and within limits! Current limits: [%d, %d]', limNeg, limPos)
+                phAxis = ClassStage.getAxis(obj.stageAxes(index));
+                [limNeg, limPos] = stage.ReturnLimits(phAxis);
+                if ValidationHelper.isStringValueInBorders(str, limNeg, limPos)
+                    obj.targets(index) = str2double(str);
+                    obj.edtTarget(index).String = MainGuiStyle.num(obj.targets(index), 4);
+                else
+                    obj.targets(index) = NaN;
+                    obj.edtTarget(index).String = '';
+                    EventStation.anonymousWarning('%s target must be a number within the soft limits [%s, %s] %s.', ...
+                        upper(obj.stageAxes(index)), MainGuiStyle.num(limNeg), MainGuiStyle.num(limPos), MainGuiStyle.micron);
+                end
             end
-            
-            stage = getObjByName(obj.stageName);
-            phAxis = ClassStage.getAxis(obj.stageAxes(index));
-            pos = stage.Pos(phAxis);
-            obj.tvCurPos(index).String = pos;
+            obj.showTargets();
         end
-        
+
+        function btnGoCallback(obj)
+            idx = find(~isnan(obj.targets));
+            if isempty(idx); return; end
+            stage = obj.getStage();
+            axesToMove = obj.stageAxes(idx);
+            positions = obj.targets(idx);
+            obj.remember();
+            obj.clearTargets();
+            stage.move(axesToMove, positions);
+        end
+
+        function clearTargets(obj)
+            obj.targets(:) = NaN;
+            set(obj.edtTarget, 'String', '');
+            obj.showTargets();
+        end
+
+        function showTargets(obj)
+            % Amber for pending targets; "Go to target" lit when there is one
+            for i = 1:numel(obj.targets)
+                MainGuiStyle.setPending(obj.edtTarget(i), ~isnan(obj.targets(i)));
+            end
+            obj.checkMovementEnabled();
+        end
+
+        function btnBackCallback(obj)
+            if isempty(obj.history); return; end
+            stage = obj.getStage();
+            previous = obj.history(end, 1:numel(obj.stageAxes));
+            obj.history(end, :) = [];
+            stage.move(obj.stageAxes, previous);
+            obj.checkMovementEnabled();
+        end
+
+        function remember(obj)
+            % Keep the current position, for Back
+            stage = obj.getStage();
+            pos = zeros(1, 3);
+            pos(1:numel(obj.stageAxes)) = stage.Pos(obj.stageAxes);
+            if isempty(obj.history) || any(abs(obj.history(end, :) - pos) > 1e-6)
+                obj.history(end + 1, :) = pos;
+                if size(obj.history, 1) > obj.HISTORY_LENGTH
+                    obj.history(1, :) = [];
+                end
+            end
+        end
+
         function cbxJoystickCallback(obj)
             % Enables or disable the joystick according to the GUI settings.
             % While the joystick is on, updates the location every ~300ms.
-            stage = getObjByName(obj.stageName);
-                if isempty(stage); throwBaseObjException(obj.stageName); end
+            stage = obj.getStage();
             jstick = getObjByName(Joystick.NAME);
                 if isempty(jstick); throwBaseObjException(Joystick.NAME); end
             stageScanner = getObjByName(StageScanner.NAME);
-            
+
             isEnabled = obj.cbxJoystick.Value;
             % Don't let other things interrupt
             if strcmp(stageScanner.mStageName, obj.stageName) ...
@@ -299,122 +297,133 @@ classdef ViewStagePanelMovementControl < GuiComponent & EventListener
                 stageScanner.stopScan;
             end
             jstick.isEnabled = isEnabled;
-            
             obj.checkMovementEnabled;
-            % Once we have this ^ we can safely turn on joystick control
             stage.JoystickControl(isEnabled);
-            
-
             stage.sendEventPositionChanged;
             while jstick.isEnabled
                 jstick.buttonAction;
                 stage.sendEventPositionChanged;
                 drawnow();
             end
-            
-            % ^ what a mish mash. todo: sort it out.
         end
-        
-        function showEdtCurPos(obj, index, shouldShow)
-            % Sets the view of the obj.edtCurPos edit-input
-            % shouldShow - boolean (logical) - the new state
-            % index - the index axis
-            if shouldShow
-                obj.hboxCurPos(index).Widths = [-1 -1];
-%                 uicontrol(obj.edtCurPos(index)); % also request focus
-            else
-                obj.hboxCurPos(index).Widths = [-1 0];
-            end
-        end
-        
-        function checkEdtCurPosValue(obj, index)
-            % Checks that string in obj.edtCurPos has a valid value.
-            % Reverts the value if not valid based on obj.edtCurPosValue
-            % or updates obj.edtCurPosValue based on the edt
-            stage = getObjByName(obj.stageName);
-            if isempty(stage); throwBaseObjException(obj.stageName); end
-                
-            phAxis = ClassStage.getAxis(obj.stageAxes(index));
-            [limNeg, limPos] = stage.ReturnLimits(phAxis);
-            if ValidationHelper.isStringValueInBorders(obj.edtCurPos(index).String, limNeg, limPos)
-                obj.edtCurPosValue(index) = str2double(obj.edtCurPos(index).String);
-            elseif isempty(obj.edtCurPos(index).String)
-                % Delete it
-                obj.clearEdtCurPos(index);
-                % Make sure to update the button as well:
-                if all(obj.edtCurPosValue == inf)
-                    obj.isBlueMovingAvailable = false;
-                    obj.btnMoveToBlue.Enable = 'off';
-                end
-                return
-            else
-                EventStation.anonymousWarning('Value must be a number between %d and %d! Reverting.', limNeg, limPos)
-            end
-            obj.edtCurPos(index).String = StringHelper.formatNumber(obj.edtCurPosValue(index));
-        end
-        
-        function clearEdtCurPos(obj, index)
-            % Clears the GUI from the edit-input, also clears the
-            % value stored as a numeric value
-            obj.edtCurPos(index).String = '';
-            obj.edtCurPosValue(index) = inf;
-            obj.showEdtCurPos(index, false);
-            set(gcf, 'CurrentObject', gcf);
-            % ^ removes the focus from the edt and sets the focus to the
-            % current figure itself
-        end
-        
-        function checkMovementEnabled(obj)
-            % Enables or disables (Greys out) the movement control buttons.
-            % Control can be either 'On' or 'Off'
-            
-            isEnabled = true; % will be false if ANY of the checks gives false, and true otherwise
 
-            % We want to enable movement only if
-            %  * we're in closed loop
+        function checkMovementEnabled(obj)
+            % Movement is possible when: closed loop, no scan running, joystick off, and
+            % no experiment running.
             stage = getObjByName(obj.stageName);
-            isStageExist = ~isempty(stage);
-            isLoopClosed = strcmp(stage.loopMode, 'Closed');
-            isEnabled = isEnabled && isStageExist && isLoopClosed;
-            %  * stage scanner is not running
+            isEnabled = ~isempty(stage) && strcmp(stage.loopMode, 'Closed');
             scanner = getObjByName(StageScanner.NAME);
             isEnabled = isEnabled && ~scanner.mCurrentlyScanning;
-            %  * joystick is off
-            if stage.hasJoystick
+            if ~isempty(stage) && stage.hasJoystick
                 jstick = getObjByName(Joystick.NAME);
                 if ~isempty(jstick)
                     isEnabled = isEnabled && ~jstick.isEnabled;
-                else
-                    % This is not the main event, but it's not bad to tell
-                    % the user that there is an upcoming problem
-                    EventStation.anonymousWarning('Joystick was supposed to be found, but wasn''t!')
                 end
             end
-            %  * current Experiment is not running
             exp = getObjByName(Experiment.current);
-            if ~isempty(exp) && ~isa(exp, 'SpcmCounter') 
+            if ~isempty(exp) && ~isa(exp, 'SpcmCounter')
                 isEnabled = isEnabled && ~exp.isRunning;
             end
-            
-            
-            % Now we use it to set enabled as on/off
-            onOffString = BooleanHelper.boolToOnOff(isEnabled);
-            ax = ClassStage.getAxis(obj.stageAxes);
-            for i = 1:length(ax)
-                obj.btnMoveLeft(i).Enable = onOffString;
-                obj.btnMoveRight(i).Enable = onOffString;
+
+            onOff = BooleanHelper.boolToOnOff(isEnabled);
+            set([obj.btnMinus, obj.btnPlus, obj.btnSavedGo], 'Enable', onOff);
+            hasTarget = any(~isnan(obj.targets));
+            obj.btnGo.Enable = BooleanHelper.boolToOnOff(isEnabled && hasTarget);
+            obj.btnClear.Enable = BooleanHelper.boolToOnOff(hasTarget);
+            MainGuiStyle.paintButton(obj.btnGo, BooleanHelper.ifTrueElse(isEnabled && hasTarget, 'pending', 'normal'));
+            obj.btnBack.Enable = BooleanHelper.boolToOnOff(isEnabled && ~isempty(obj.history));
+            if ~isempty(obj.history)
+                obj.btnBack.TooltipString = sprintf('Return to (%s) %s, where the stage was before the last move from this section', ...
+                    strjoin(arrayfun(@(v) MainGuiStyle.num(v), obj.history(end, 1:numel(obj.stageAxes)), 'UniformOutput', false), ', '), ...
+                    MainGuiStyle.micron);
             end
-            
-            isMoveAvailable = obj.isBlueMovingAvailable && isEnabled;
-            obj.btnMoveToBlue.Enable = BooleanHelper.boolToOnOff(isMoveAvailable);
         end
-            
     end
-    
+
+    %% Saved positions
+    methods
+        function list = savedList(obj)
+            list = struct('name', {}, 'pos', {});
+            try
+                if ispref(obj.PREF_GROUP, obj.prefName)
+                    list = getpref(obj.PREF_GROUP, obj.prefName);
+                end
+            catch
+            end
+        end
+
+        function saveList(obj, list)
+            setpref(obj.PREF_GROUP, obj.prefName, list);
+            obj.refreshSaved();
+        end
+
+        function name = prefName(obj)
+            name = ['savedPositions_' matlab.lang.makeValidName(obj.stageName)];
+        end
+
+        function refreshSaved(obj)
+            list = obj.savedList;
+            if isempty(list)
+                set(obj.popSaved, 'String', {'(none saved)'}, 'Value', 1);
+                set([obj.btnSavedDelete], 'Enable', 'off');
+                obj.btnSavedGo.Visible = 'on';
+                obj.btnSavedGo.Enable = 'off';
+                return
+            end
+            items = cell(1, numel(list));
+            for k = 1:numel(list)
+                items{k} = sprintf('%s   (%s)', list(k).name, strjoin(arrayfun(@(v) MainGuiStyle.num(v, 2), ...
+                    list(k).pos(:)', 'UniformOutput', false), ', '));
+            end
+            set(obj.popSaved, 'String', items, 'Value', min(max(1, obj.popSaved.Value), numel(items)));
+            obj.btnSavedDelete.Enable = 'on';
+            obj.checkMovementEnabled();
+        end
+
+        function btnSavedAddCallback(obj)
+            stage = obj.getStage();
+            pos = stage.Pos(obj.stageAxes);
+            list = obj.savedList;
+            default = sprintf('P%d', numel(list) + 1);
+            answer = inputdlg(sprintf('Name for the position (%s) %s:', ...
+                strjoin(arrayfun(@(v) MainGuiStyle.num(v), pos, 'UniformOutput', false), ', '), MainGuiStyle.micron), ...
+                'Save position', 1, {default});
+            if isempty(answer) || isempty(strtrim(answer{1})); return; end
+            list(end + 1) = struct('name', strtrim(answer{1}), 'pos', pos);
+            obj.saveList(list);
+            obj.popSaved.Value = numel(list);
+        end
+
+        function btnSavedGoCallback(obj)
+            list = obj.savedList;
+            k = obj.popSaved.Value;
+            if isempty(list) || k > numel(list); return; end
+            stage = obj.getStage();
+            obj.remember();
+            stage.move(obj.stageAxes, list(k).pos(1:numel(obj.stageAxes)));
+        end
+
+        function btnSavedDeleteCallback(obj)
+            list = obj.savedList;
+            k = obj.popSaved.Value;
+            if isempty(list) || k > numel(list); return; end
+            if ~QuestionUserYesNo('Delete saved position', sprintf('Delete the saved position "%s"?', list(k).name))
+                return
+            end
+            list(k) = [];
+            obj.saveList(list);
+        end
+    end
+
+    methods (Access = private)
+        function stage = getStage(obj)
+            stage = getObjByName(obj.stageName);
+            if isempty(stage); throwBaseObjException(obj.stageName); end
+        end
+    end
+
     %% overridden from EventListener
     methods
-        % When events happen, this function jumps.
-        % event is the event sent from the EventSender
         function onEvent(obj, event)
             if event.isError ...
                     || isfield(event.extraInfo, ClassStage.EVENT_STEP_SIZE_CHANGED) ...
@@ -429,6 +438,4 @@ classdef ViewStagePanelMovementControl < GuiComponent & EventListener
             end
         end
     end
-    
 end
-

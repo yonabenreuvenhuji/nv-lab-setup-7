@@ -793,10 +793,11 @@ classdef (Abstract) ClassStage < EventSender & Savable & EventListener
         end
         
         function bool = hasFastScan(obj)
-%             if isfield(obj.availableProperties, obj.HAS_FAST_SCAN)
-%                 bool = obj.availableProperties.(obj.HAS_FAST_SCAN);
-%             end
-        bool = isfield(obj.availableProperties,obj.HAS_FAST_SCAN);
+            % The field's VALUE, not only whether it exists: the Standa stage sets it to
+            % false, and the old isfield-only check made "Fast Scan" ticked by default
+            % there (every scan then warned "No fast scan for this stage!").
+            bool = isfield(obj.availableProperties, obj.HAS_FAST_SCAN) ...
+                && logical(obj.availableProperties.(obj.HAS_FAST_SCAN));
         end
         
         function bool = hasSlowScan(obj)

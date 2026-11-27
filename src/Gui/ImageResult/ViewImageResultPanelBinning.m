@@ -1,62 +1,38 @@
 classdef ViewImageResultPanelBinning < GuiComponent
-    %ViewImageResultPanelBinning
-    %   Detailed explanation goes here
-    
+    %VIEWIMAGERESULTPANELBINNING "Image [kcps ▾ | Lifetime]" in the image toolbar, for
+    %detectors that record a time histogram.
+
     properties
-        radioKcps       % #1
-        radioLifetime   % #2
+        popup
     end
-    
+
     methods
         function obj = ViewImageResultPanelBinning(parent, controller)
             obj@GuiComponent(parent, controller);
-            %             panel = uix.Panel('Parent', parent.component,'Title','Colormap', 'Padding', 5);
-            bgMain = uibuttongroup(...
-                'Parent', parent.component, ...
-                'Title', 'Image', ...
-                'SelectionChangedFcn',@obj.callbackRadioSelection);
-            obj.component = bgMain;
-            
-            rbHeight = 15; % "rb" stands for "radio button"
-            rbWidth = 70;
-            paddingFromLeft = 10;
-            
-            obj.radioKcps = uicontrol(obj.PROP_RADIO{:}, 'Parent', bgMain, ...
-                'String', Spcm.signalUnits(), ...   % 'V' with the photodiode
-                'Position', [paddingFromLeft 60 rbWidth rbHeight], ...  % [fromLeft, fromBottom, width, height]
-                'Tag', ImageScanResult.IMAGE_OPTIONS{1});
-            obj.radioLifetime = uicontrol(obj.PROP_RADIO{:}, 'Parent', bgMain, ...
-                'String', 'Lifetime', ...
-                'Position', [paddingFromLeft 35 rbWidth rbHeight], ...  % [fromLeft, fromBottom, width, height]
-                'Tag', ImageScanResult.IMAGE_OPTIONS{2});
-            
-            obj.height = 100;
-            obj.width = 90;
+            box = MainGuiStyle.hbox(parent.component, 4);
+            obj.component = box;
+            MainGuiStyle.label(box, 'Image', 'right');
+            obj.popup = MainGuiStyle.popup(box, {Spcm.signalUnits(), 'Lifetime'}, ...
+                'Callback', @obj.popupCallback);
+            box.Widths = [40 90];
+            obj.height = MainGuiStyle.ROW_H;
+            obj.width = 136;
         end
-        
+
         function update(obj)
-            % Executes when image updates
-            % Get values from ImageScanResult
             imageScanResult = getObjByName(ImageScanResult.NAME);
-            if ~isempty(imageScanResult.mHist)
-                obj.radioLifetime.Enable = 'on';
+            hasHist = ~isempty(imageScanResult.mHist);
+            if ~hasHist
+                obj.popup.String = {Spcm.signalUnits()};
             else
-                obj.radioLifetime.Enable = 'off';
+                obj.popup.String = {Spcm.signalUnits(), 'Lifetime'};
             end
-            switch imageScanResult.imageType
-                case 1
-                    obj.component.SelectedObject = obj.radioKcps;
-                case 2
-                    obj.component.SelectedObject = obj.radioLifetime;
-            end
+            obj.popup.Value = min(imageScanResult.imageType, numel(obj.popup.String));
         end
-        
-        %%%% Callbacks %%%%
-        function callbackRadioSelection(obj, ~, event) %#ok<INUSL>
+
+        function popupCallback(obj, ~, ~)
             imageScanResult = getObjByName(ImageScanResult.NAME);
-            action = event.NewValue.Tag;
-            actionIndex = find(strcmp(action, ImageScanResult.IMAGE_OPTIONS));
-            imageScanResult.imageType = actionIndex;
+            imageScanResult.imageType = obj.popup.Value;
             imageScanResult.update;
         end
     end

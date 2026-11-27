@@ -13,7 +13,8 @@ classdef ButtonStartStop < GuiComponent
         % These two have default values
         startString = 'Start';
         stopString = 'Stop';
-        
+
+        colors = {}     % optional {startColor, stopColor}; empty = green / red
     end
     
     properties (Access = private)
@@ -76,13 +77,20 @@ classdef ButtonStartStop < GuiComponent
                 error('New value for button must be convertible to true or false')
             end
             obj.isRunningPrivate = newVal;
+            if numel(obj.colors) == 2
+                startColor = obj.colors{1};
+                stopColor = obj.colors{2};
+            else
+                startColor = obj.COLOR_START;
+                stopColor = obj.COLOR_STOP;
+            end
             if newVal
                 % We want to be able to stop
-                obj.component.BackgroundColor = obj.COLOR_STOP;
+                obj.component.BackgroundColor = stopColor;
                 obj.component.String = obj.stopString;
             else
                 % We want to be able to start
-                obj.component.BackgroundColor = obj.COLOR_START;
+                obj.component.BackgroundColor = startColor;
                 obj.component.String = obj.startString;
             end
         end

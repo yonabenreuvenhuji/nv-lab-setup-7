@@ -571,6 +571,11 @@ classdef (Sealed) Helmholtz < BaseObject & EventSender
             obj.sendEvent(struct(obj.EVENT_PREVIEW_CHANGED, true));
         end
 
+        function tf = canFlip(obj)
+            % Whether this setup has a flip switch (flip_direction.available), for the GUI
+            tf = ~isempty(obj.flipAvailable) && logical(obj.flipAvailable);
+        end
+
         function flipDirection(obj, state)
             if obj.flipAvailable
                 state = num2str(state);

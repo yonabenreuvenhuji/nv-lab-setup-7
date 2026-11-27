@@ -12,7 +12,13 @@ classdef GuiControllerImage < GuiController
             end
             shouldConfirmOnExit = true;
             openOnlyOne = true;
-            windowName = 'ImageNVC_touch_new';
+            % The title bar (was 'ImageNVC_touch_new'). Also how a second start finds the
+            % window that is already open.
+            windowName = 'NV lab';
+            try
+                windowName = sprintf('NV lab %s Setup %s', char(8212), JsonInfoReader.setupNumber);
+            catch
+            end
             obj = obj@GuiController(windowName, shouldConfirmOnExit, openOnlyOne);
             obj.dummuMode = dummyMode;
         end
@@ -31,6 +37,8 @@ classdef GuiControllerImage < GuiController
         function onStarted(obj)
             obj.windowMinHeight = 1;
             obj.windowMinWidth = 1;
+            obj.maximize();     % the window is always used maximized
+            MainGuiStyle.relayout(obj.figureWindow);    % (section titles covering their content)
         end
         
         function onClose(obj)

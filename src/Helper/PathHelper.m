@@ -205,7 +205,7 @@ classdef PathHelper
                 fileNames = {};
                 inputFolder = '';   % It's irrelevant
             else
-                fileNames = extractfield(allFilesInFolder, 'name');
+                fileNames = {allFilesInFolder.name};    % (was extractfield, which needs the Mapping Toolbox)
                 isIni = endsWith(fileNames, '.ini');    % This file comes from Google Drive, but we don't want it
                 fileNames = fileNames(~isIni);
             end

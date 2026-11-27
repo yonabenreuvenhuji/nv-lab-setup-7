@@ -1,66 +1,52 @@
 classdef ViewImageResultPanelPlot < GuiComponent
-    %VIEWSTAGESCANPANELPLOT panel for plotting the image
-    
+    %VIEWIMAGERESULTPANELPLOT "Aspect [Equal ▾]" in the image toolbar (and the
+    %"Open in figure" action).
+
     properties
         popupStyle
     end
-    
+
     methods
         function obj = ViewImageResultPanelPlot(parent, controller)
             obj@GuiComponent(parent, controller);
-            panel = uix.Panel('Parent', parent.component, ...
-                'Title', 'Plot Options', ...
-                'Padding', 5);
-            vboxMain = uix.VBox('Parent', panel, ...
-                'Spacing', 5, 'Padding', 0);
-            obj.component = vboxMain;
-            
-            obj.popupStyle = uicontrol(obj.PROP_POPUP{:}, ...
-                'Parent', vboxMain, ...
-                'String', ImageScanResult.PLOT_STYLE_OPTIONS_2D, ...
-                'Callback', @obj.popupStyleCallback);
-            uicontrol(obj.PROP_BUTTON{:}, ...
-                'Parent', vboxMain, ...
-                'String', 'Figure', ...
-                'Callback', @obj.btnOpenInFigureCallback);
-            
-            vboxMain.Heights = [25 -1];
-            obj.height = 120;
-            obj.width = 120;
-            
+            box = MainGuiStyle.hbox(parent.component, 4);
+            obj.component = box;
+            MainGuiStyle.label(box, 'Aspect', 'right');
+            obj.popupStyle = MainGuiStyle.popup(box, ImageScanResult.PLOT_STYLE_OPTIONS_2D, ...
+                'Callback', @obj.popupStyleCallback, 'TooltipString', ...
+                'Normal: fill the space. Equal: 1 µm is as long on both axes. Square: a square plot.');
+            box.Widths = [46 80];
+            obj.height = MainGuiStyle.ROW_H;
+            obj.width = 130;
             obj.update;
         end
 
         function update(obj)
-            % Get data from ImageScanResult, and apply on views
             imageScanResult = getObjByName(ImageScanResult.NAME);
             if isempty(imageScanResult); throwBaseObjException(ImageScanResult.NAME); end
             switch imageScanResult.mDimNumber
                 case 1
                     obj.popupStyle.String = ImageScanResult.PLOT_STYLE_OPTIONS_1D;
-                case 2
+                otherwise
                     obj.popupStyle.String = ImageScanResult.PLOT_STYLE_OPTIONS_2D;
             end
-            obj.popupStyle.Value = imageScanResult.plotStyle;
+            obj.popupStyle.Value = min(imageScanResult.plotStyle, numel(obj.popupStyle.String));
         end
-    end
-       
-    methods (Access = private)
-        %%%% Callbacks %%%%        
+
         function btnOpenInFigureCallback(obj, ~, ~) %#ok<INUSD>
             imageScanResult = getObjByName(ImageScanResult.NAME);
             if isempty(imageScanResult); throwBaseObjException(ImageScanResult.NAME); end
             isVisible = true;
             imageScanResult.copyToFigure(isVisible);
         end
-        
+    end
+
+    methods (Access = private)
         function popupStyleCallback(obj, ~, ~)
             imageScanResult = getObjByName(ImageScanResult.NAME);
             if isempty(imageScanResult); throwBaseObjException(ImageScanResult.NAME); end
-            
             imageScanResult.plotStyle = obj.popupStyle.Value;
             imageScanResult.imagePostProcessing;    % Update added layer (including plot style)
         end
     end
-    
 end

@@ -434,6 +434,17 @@ classdef PhotoDiodeDigitizerNiDaqControlled < Spcm & NiDaqControlled
     end
     
     methods (Access = protected) % scan helpers
+        function values = partialScanLine(obj)
+            % The pixels of the current line measured so far, in the order they were
+            % measured (the main window draws them live). Empty in 'trigger' mode, where
+            % the line is only read from the digitizer at its end.
+            values = [];
+            if strcmpi(obj.scanAcquisitionMode, 'software') && obj.scanPixelIndex > 0 ...
+                    && numel(obj.current1DScanVoltageValues) >= obj.scanPixelIndex
+                values = obj.current1DScanVoltageValues(1:obj.scanPixelIndex);
+            end
+        end
+
         function resetScanLine(obj)
             % Empty line buffer, disarm the digitizer if it was armed.
             if obj.scanArmed && strcmpi(obj.scanAcquisitionMode, 'trigger')

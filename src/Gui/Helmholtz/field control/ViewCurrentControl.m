@@ -8,8 +8,9 @@ classdef ViewCurrentControl < GuiComponent & EventListener
         btnMoveLeft         % 1x3 button
         btnMoveRight        % 1x3 button
         
-        btnMoveToBlue       % button
-        isBlueMovingAvailable   % logical
+        btnMoveToBlue       % button: "Set to target"
+        btnClearTargets     % button
+        isBlueMovingAvailable   % logical: some target is pending
         
         edtSteps            % edit-text 
 
@@ -33,98 +34,30 @@ classdef ViewCurrentControl < GuiComponent & EventListener
             obj@EventListener(namesToListenTo);
             obj.helm = getObjByName('Helmholtz');
             
-            %%%% panel init %%%%
-            panelMain = uix.Panel('Parent', parent.component, 'Title', 'Current Control (A)', 'Padding', 5);
-            hboxMain = uix.HBox('Parent', panelMain, 'Spacing', 25, 'Padding', 0);
-            vboxLeft = uix.VBox('Parent',hboxMain, 'Spacing', 6); % will contain the grid and "step"
-            
-            %%%% step %%%%
-            hboxStep = uix.HBox('Parent', vboxLeft, 'Spacing', 5);
-            uicontrol(obj.PROP_LABEL{:}, 'Parent', hboxStep, 'String', 'Step:');
-            obj.edtSteps = uicontrol(obj.PROP_EDIT{:}, 'Parent', hboxStep);
-            hboxStep.Widths = [-1 -1];
-            stepHeightNoSpacing = 25;
-            
-            %%%% the left side grid %%%%
-            gridLeftSide = uix.Grid('Parent', vboxLeft, 'Spacing', 5);
-            
-            % 1st column: axes labels
-            for i = 1:3
-                uicontrol(obj.PROP_LABEL{:}, 'Parent', gridLeftSide, 'String', obj.AXES{i});
-            end
-            
-            % 2nd column: lower limits
-            for i = 1:3
-                uicontrol(obj.PROP_LIGHT_LABEL{:}, 'Parent', gridLeftSide, 'String', obj.helm.minCurrent(i));
-            end
-            
-            % 3rd column: arrow left
-            obj.btnMoveLeft = gobjects(1, 3);
-            for i = 1:3
-                obj.btnMoveLeft(i) = uicontrol(obj.PROP_BUTTON{:}, ...
-                    'Parent', gridLeftSide, ...
-                    'String', StringHelper.LEFT_ARROW, ...
-                    'FontSize', 20);
-            end
-            
-            % 4th column: current position
-            obj.tvCurB = gobjects(1, 3);
-            obj.edtCurB = gobjects(1, 3);
-            obj.hboxCurB = gobjects(1, 3);
+            %%%% layout (shared with the spherical and cartesian sections) %%%%
+            L = HelmholtzAxesLayout.build(parent.component, 'Coil currents', ...
+                {'Ix (A)', 'Iy (A)', 'Iz (A)'}, ...
+                {'Current in the x coil pair, in amperes', 'Current in the y coil pair, in amperes', ...
+                'Current in the z coil pair, in amperes'}, 'A', 'How far − and + move a current (A)');
+            obj.component = L.panel;
+            obj.edtSteps = L.edtSteps;
+            obj.btnMoveLeft = L.btnMoveLeft;
+            obj.btnMoveRight = L.btnMoveRight;
+            obj.tvCurB = L.tvCurB;
+            obj.edtCurB = L.edtCurB;
+            obj.hboxCurB = L.hboxCurB;
+            obj.btnMoveToBlue = L.btnMoveToBlue;
+            obj.btnClearTargets = L.btnClearTargets;
+            obj.btnClearTargets.Callback = @(h,e) obj.clearAllTargets();
             obj.edtCurBValue = inf * ones(1, 3);
-            % ^ We want a local copy of this value 
             for i = 1:3
-                obj.hboxCurB(i) = uix.HBox('Parent', gridLeftSide, 'Padding', 0, 'Spacing', 0);
-                obj.tvCurB(i) = uicontrol(obj.PROP_EDIT{:}, 'Parent', obj.hboxCurB(i));
-                obj.edtCurB(i) = uicontrol(obj.PROP_EDIT{:}, 'Parent', obj.hboxCurB(i), ...
-                    'ForegroundColor', 'blue', 'BackgroundColor', [0.8 0.9 1]);     % Blue over light blue
-                obj.showEdtCurB(i, false);   % hide the edit-input until it's needed - when user inputs data
+                % the supply's range (fixed)
+                L.lowerLimLbl(i).String = StringHelper.formatNumber(obj.helm.minCurrent(i));
+                L.upperLimLbl(i).String = StringHelper.formatNumber(obj.helm.maxCurrent(i));
+                set([L.lowerLimLbl(i), L.upperLimLbl(i)], 'TooltipString', 'The supply''s current range');
+                TargetEntry.styleNow(obj.tvCurB(i));
+                TargetEntry.styleTarget(obj.edtCurB(i));
             end
-            
-            % 5th column: arrow right
-            obj.btnMoveRight = gobjects(1, 3);
-            for i = 1: 3
-                obj.btnMoveRight(i) = uicontrol(obj.PROP_BUTTON{:}, ...
-                    'Parent', gridLeftSide, ...
-                    'String', StringHelper.RIGHT_ARROW, ...
-                    'FontSize', 20);
-            end
-            
-            % 6th column: upper limits
-            for i = 1:3
-                uicontrol(obj.PROP_LIGHT_LABEL{:}, 'Parent', gridLeftSide, 'String', obj.helm.maxCurrent(i));
-            end
-            
-            % grid properties
-            gridWidths = [50 60 35 70 35 60];
-            gridWithdsRel = -1*gridWidths;
-            heightGridTotalNoSpacing = 90;
-            lineHeight = heightGridTotalNoSpacing / 3;
-            gridHeights = lineHeight * ones(1, 3);
-            set(gridLeftSide, 'Widths', gridWithdsRel, 'Heights', gridHeights);
-            gridLeftHeightTotal = heightGridTotalNoSpacing + 5 * 3;
-            gridLeftWidthTotal = sum(gridWidths) + 4 * length(gridWidths);
-
-            %%%% vbox left - all inner components are ready %%%%
-            vboxLeft.Heights = [stepHeightNoSpacing, heightGridTotalNoSpacing+10];
-            vboxLeftHeightTotal = gridLeftHeightTotal + stepHeightNoSpacing + 42;
-            
-            
-            %%%% 'move to' button %%%%
-            vboxRight = uix.VBox('Parent',hboxMain, 'Spacing', 6);
-            obj.btnMoveToBlue = uicontrol(obj.PROP_BUTTON{:}, ...
-                'Parent', vboxRight, ...
-                'String', 'Change To Blue', ...
-                'Enable', 'off', ...       % the starting state - off
-                'TooltipString', 'Move stage to the position appearing in blue');
-            heights = [-2];
-            vboxRight.Heights = heights;
-            rightSideTotalWidth = 120;
-            
-            %%%% Set mainHbox widths %%%%
-            widthsMain = [gridLeftWidthTotal, rightSideTotalWidth];
-            widthsRelative = widthsMain * -1 ;
-            hboxMain.Widths = widthsRelative;
             
             %%%% Callbacks %%%%
             obj.edtSteps.Callback = @(h,e) obj.edtStepSizeCallback();
@@ -132,18 +65,16 @@ classdef ViewCurrentControl < GuiComponent & EventListener
             obj.isBlueMovingAvailable = false; % By default
             
             for i = 1:3
-                obj.tvCurB(i).Callback = @(h,e) obj.tvCurBCallback(i);
                 obj.edtCurB(i).Callback = @(h,e) obj.checkEdtCurBValue(i);
-                
+
                 isLeft = true;
                 obj.btnMoveLeft(i).Callback = @(h,e) obj.btnMoveCallback(i, isLeft);
                 obj.btnMoveRight(i).Callback = @(h,e) obj.btnMoveCallback(i, ~isLeft);
             end
             
             
-            %%%% Internal values %%%%
-            obj.width = sum(widthsMain) + (hboxMain.Spacing -3) * length(widthsMain);
-            obj.height = vboxLeftHeightTotal;
+            obj.width = L.width;
+            obj.height = L.height;
             
             obj.refresh();
         end
@@ -154,7 +85,8 @@ classdef ViewCurrentControl < GuiComponent & EventListener
             for i = 1:3
                 obj.tvCurB(i).String = StringHelper.formatNumber(currentI(i));
             end
-            obj.btnMoveToBlue.Enable = 'on';
+            TargetEntry.paintApply(obj.btnMoveToBlue, obj.isBlueMovingAvailable);
+            obj.btnClearTargets.Enable = BooleanHelper.boolToOnOff(obj.isBlueMovingAvailable);
             drawnow % If we are in mid-operation
         end
         
@@ -192,15 +124,14 @@ classdef ViewCurrentControl < GuiComponent & EventListener
                 end
             end
             obj.helm.setI(newValue);
-            isBeingGrayed = false;
             for i = 1:3
                 obj.btnMoveLeft(i).Enable = 'on';
-                obj.recolor(obj.tvCurB(i),isBeingGrayed)
+                TargetEntry.styleNow(obj.tvCurB(i));
                 obj.btnMoveRight(i).Enable = 'on';
             end
             % We are now finished moving. Waiting for new Input.
             obj.isBlueMovingAvailable = false;
-            obj.btnMoveToBlue.Enable = 'off';
+            obj.refresh();
         end
         
         function tvCurBCallback(obj, index)
@@ -218,49 +149,46 @@ classdef ViewCurrentControl < GuiComponent & EventListener
             obj.tvCurB(index).String = StringHelper.formatNumber(obj.helm.I(index));
         end
         
-        function showEdtCurB(obj, index, shouldShow)
-            % Sets the view of the obj.edtCurPos edit-input
-            % shouldShow - boolean (logical) - the new state
-            % index - the index axis
-            if shouldShow
-                obj.hboxCurB(index).Widths = [-1 -1];
-            else
-                obj.hboxCurB(index).Widths = [-1 0];
-            end
+        function showEdtCurB(~, ~, ~)
+            % now | target, both always shown
+            % (now and target are separate columns: nothing to show or hide)
         end
-        
+
         function checkEdtCurBValue(obj, index)
-            % Checks that string in obj.edtCurB has a valid value.
-            % Reverts the value if not valid based on obj.edtCurBValue
-            % or updates obj.edtCurBValue based on the edt
+            % Enter in a target: pending (amber) if it is within the supply's range;
+            % empty = no target
             limNeg = obj.helm.minCurrent(index);
             limPos = obj.helm.maxCurrent(index);
-            if ValidationHelper.isStringValueInBorders(obj.edtCurB(index).String, limNeg, limPos)
-                obj.edtCurBValue(index) = str2double(obj.edtCurB(index).String);
-            elseif isempty(obj.edtCurB(index).String)
-                % Delete it
+            str = strtrim(obj.edtCurB(index).String);
+            if isempty(str)
                 obj.clearEdtCurB(index);
-                % Make sure to update the button as well:
-                if all(obj.edtCurBValue == inf)
-                    obj.isBlueMovingAvailable = false;
-                    obj.btnMoveToBlue.Enable = 'off';
-                end
-                return
+            elseif ValidationHelper.isStringValueInBorders(str, limNeg, limPos)
+                obj.edtCurBValue(index) = str2double(str);
+                obj.edtCurB(index).String = StringHelper.formatNumber(obj.edtCurBValue(index));
+                TargetEntry.showPending(obj.edtCurB(index), true);
             else
                 EventStation.anonymousWarning('Current must be a number between %.3f and %.3f A! Reverting.', limNeg, limPos)
+                if isinf(obj.edtCurBValue(index))
+                    obj.clearEdtCurB(index);
+                else
+                    obj.edtCurB(index).String = StringHelper.formatNumber(obj.edtCurBValue(index));
+                end
             end
-            obj.edtCurB(index).String = StringHelper.formatNumber(obj.edtCurBValue(index));
+            obj.isBlueMovingAvailable = any(~isinf(obj.edtCurBValue));
+            obj.refresh();
         end
-        
+
+        function clearAllTargets(obj)
+            for i = 1:3; obj.clearEdtCurB(i); end
+            obj.isBlueMovingAvailable = false;
+            obj.refresh();
+        end
+
         function clearEdtCurB(obj, index)
-            % Clears the GUI from the edit-input, also clears the
-            % value stored as a numeric value
+            % Clears the target (and its stored value)
             obj.edtCurB(index).String = '';
             obj.edtCurBValue(index) = inf;
-            obj.showEdtCurB(index, false);
-            set(gcf, 'CurrentObject', gcf);
-            % ^ removes the focus from the edt and sets the focus to the
-            % current figure itself
+            TargetEntry.showPending(obj.edtCurB(index), false);
         end
         
     end

@@ -1,28 +1,51 @@
 classdef ViewStagePanelScanParams < GuiComponent & EventListener & EventSender
-    %VIEWSTAGESCANSCANPARAMS Summary of this class goes here
-    %   Detailed explanation goes here
-    
-    %   todo: possible bug? If someone changes properties of the "scan params" property of
-    %   the stage, the stage will not send event and the GUI won't know
-    %   about it. How often do people use matlab programatically?
-    
+    %VIEWSTAGEPANELSCANPARAMS The "Scan area" section: what each axis does in a scan.
+    %
+    %   Axis Scan  From (µm)  To (µm)  Dir  Points  Step (µm)  Centre (µm)  Span (µm)
+    %    X   [x]   [-20   ]   [ 20  ]  [→]  [ 41 ]  [  1   ]   [   0     ]  [  40   ]
+    %    Y   [x]   ...
+    %    Z   [ ]   (greyed: not scanned)                       [  2.5    ]  (grey)
+    %   [Centre ← stage]  [Range = centre ± span/2]  [Full soft range]  [Go to centre]
+    %   2D · lines along X, stepping Y · 41 × 41 = 1,681 pixels · at least 25 s
+    %
+    % WHAT USED TO BE "Fix" / "Fixed". "Fix" ticked meant "this axis is NOT scanned", and
+    % "Fixed" was the position such an axis is held at -- which is ALSO the centre that "Scan
+    % Around" built the range from. So the two were not the same thing, and greying out
+    % "Fixed" when "Fix" was off hid a number that was still in use. Now:
+    %   Scan     ticked = this axis is scanned (the opposite of the old Fix).
+    %   Centre   always editable: where an unscanned axis stays during the scan, and the
+    %            middle of the range when you set a Span. (Stored as scanParams.fixedPos.)
+    %   From / To / Dir / Points / Step / Span only matter for a scanned axis, so they are
+    %            greyed when Scan is off (they keep their values).
+    %   Step     editable: changing it changes Points to fit the range.
+    %   Span     editable: From/To = Centre ± Span/2.
+    %   Dir      → = from "From" to "To"; ← = the other way. The image is the same either
+    %            way (it is always stored From -> To); only the order the stage moves in
+    %            changes, which matters with backlash or drift.
+
     properties
-        edtFrom             % 1x3 input text
-        edtTo               % 1x3 input text
-        edtNumPoints        % 1x3 input text
-        cbxFixed            % 1x3 checkbox
-        edtFixedPos         % 1x3 input text
-        edtScanAround       % 1x3 input text
-        btnScanAroundSet    % 1x3 "Set" button
-                                
+        cbxScan             % 1xN checkbox: scan this axis
+        edtFrom             % 1xN
+        edtTo               % 1xN
+        btnDir              % 1xN toggle: direction
+        edtNumPoints        % 1xN
+        edtStep             % 1xN
+        edtCentre           % 1xN (scanParams.fixedPos)
+        edtSpan             % 1xN
+        tvSummary           % one line: what the scan will do
+        btnCentreHere
+        btnRangeAround
+        btnFullRange
+        btnGoCentre
+
         stageName   % string. the name of the relevant stage
         stageAxes   % string. valid axes of the stage. example: "zx"
     end
-    
+
     properties (Constant)
-        SCAN_AROUND_DEFAULT_STRING = '5';
+        COL_WIDTHS = [20 38 66 66 30 48 62 70 58]
     end
-    
+
     methods
         function obj = ViewStagePanelScanParams(parent, controller, stage)
             obj@GuiComponent(parent, controller);
@@ -30,309 +53,305 @@ classdef ViewStagePanelScanParams < GuiComponent & EventListener & EventSender
             obj@EventSender(sprintf('%s%s', stage.name, ' _ panel Scan params'));
             obj.stageName = stage.name;
             obj.stageAxes = stage.availableAxes;
-            axesLength = length(stage.availableAxes);
-            
-            %%%% Scan parameters panel init %%%%
-            panelScanParams = uix.Panel('Parent', parent.component,'Title','Scan Paramters', 'Padding', 5);
-            gridScanParams = uix.Grid('Parent', panelScanParams, 'Spacing', 5);
-            
-            % 1st Column - x\y\z labels
-            uix.Empty('Parent', gridScanParams);
-            for i = 1: axesLength
-                uicontrol(obj.PROP_LABEL{:}, 'Parent', gridScanParams, 'String', upper(stage.availableAxes(i)));
-            end
-            
-            
-            % 2nd Column - "from"
-            uicontrol(obj.PROP_LABEL{:}, 'Parent', gridScanParams, 'String', 'From');  % label
-            obj.edtFrom = gobjects(1,axesLength);
-            for i = 1: axesLength 
-                obj.edtFrom(i) = uicontrol(obj.PROP_EDIT{:}, 'Parent', gridScanParams);
-            end
-            
-            % 3rd Column - "to"
-            uicontrol(obj.PROP_LABEL{:}, 'Parent', gridScanParams, 'String', 'To');  % label
-            obj.edtTo = gobjects(1,axesLength);
-            for i = 1: axesLength
-                obj.edtTo(i) = uicontrol(obj.PROP_EDIT{:}, 'Parent', gridScanParams);
-            end
-            
-            % 4th Column - amount of points
-            uicontrol(obj.PROP_LABEL{:}, 'Parent', gridScanParams, 'String', '# Pts');  % label
-            obj.edtNumPoints = gobjects(1,axesLength);
-            for i = 1: axesLength
-                obj.edtNumPoints(i) = uicontrol(obj.PROP_EDIT{:}, 'Parent', gridScanParams);
-            end
-            
-            % 5th Column - "Fix" checkboxes
-            uicontrol(obj.PROP_LABEL{:}, 'Parent', gridScanParams, 'String', 'Fix');  % label
-            obj.cbxFixed = gobjects(1,axesLength);
-            for i = 1: axesLength
-                obj.cbxFixed(i) = uicontrol(obj.PROP_CHECKBOX{:}, 'Parent', gridScanParams);
-            end
-            
-            % 6th Column - "fixed position"
-            uicontrol(obj.PROP_LABEL{:}, 'Parent', gridScanParams, 'String', 'Fixed');  % label
-            obj.edtFixedPos = gobjects(1,axesLength);
-            for i = 1: axesLength
-                obj.edtFixedPos(i) = uicontrol(obj.PROP_EDIT{:}, 'Parent', gridScanParams);
-            end
-            
-            % 7th Column - "scan around"
-            uicontrol(obj.PROP_LABEL{:}, 'Parent', gridScanParams, 'String', 'Scan Around');  % label
-            obj.edtScanAround = gobjects(1,axesLength);
-            obj.btnScanAroundSet = gobjects(1,axesLength);
-            for i = 1: axesLength
-                hboxScanAround = uix.HBox('Parent', gridScanParams, 'Spacing', 5, 'Padding', 0);
-                obj.edtScanAround(i) = uicontrol(obj.PROP_EDIT{:}, 'Parent', hboxScanAround, 'String', obj.SCAN_AROUND_DEFAULT_STRING);
-                obj.btnScanAroundSet(i) = uicontrol(obj.PROP_BUTTON{:}, 'Parent', hboxScanAround, 'String', 'Set');
-                hboxScanAround.Widths = [40 40];
-            end
-            
-            wftf = 60;  % Width for From, To & Fixed-position
-            widthsPanelScanParams = [20 wftf wftf 40 25 wftf 90];
-            heightsPanelScanParams = 20;
-            for i = 1 : axesLength
-                heightsPanelScanParams(end + 1) = 25; %#ok<AGROW>
-            end
-            panelScanParamsHeight = sum(heightsPanelScanParams) + length(heightsPanelScanParams) * 5 + 25;
-            set(gridScanParams, 'Widths', widthsPanelScanParams, 'Heights', heightsPanelScanParams);
-            
-            
-            obj.height = panelScanParamsHeight;
-            obj.width = sum(widthsPanelScanParams)+5*length(widthsPanelScanParams) + 10;
-            
-            
-            
-            %%%% Set callbacks %%%%
-            for i=1 : length(obj.stageAxes)
-                set(obj.edtFrom(i), 'Callback', @(h,e)obj.edtFromChangedCallback(i));
-                set(obj.edtTo(i), 'Callback', @(h,e)obj.edtToChangedCallback(i));
-                set(obj.edtNumPoints(i), 'Callback',@(h,e)obj.edtNumPointsChangedCallback(i));
-                set(obj.cbxFixed(i), 'Callback',@(h,e)obj.cbxFixedChangedCallback(i));
-                set(obj.edtFixedPos(i), 'Callback', @(h,e)obj.edtFixedChangedCallback(i));
-                set(obj.edtScanAround(i), 'Callback', @(h,e)obj.scanAroundCallback(i));
-                set(obj.btnScanAroundSet(i), 'Callback', @(h,e)obj.setAroundCallback(i));
-            end
-            
-            %%%% init values into fields %%%%
-            obj.refresh();
-        end
-        
-        function edtNumPointsChangedCallback(obj, index)
-            % index - int. [1 to length(obj.stageAxes)] which view was changed
-            stage = getObjByName(obj.stageName);
-                if isempty(stage); throwBaseObjException(obj.stageName); end
-            scanParams = stage.scanParams;
-            phAxis = ClassStage.getAxis(obj.stageAxes(index));
-            
-            edtNumPointsI = obj.edtNumPoints(index);
-            if ValidationHelper.isValuePositiveInteger(edtNumPointsI.String)
-                scanParams.numPoints(phAxis) = str2double(edtNumPointsI.String);
-            else
-                edtNumPointsI.String = scanParams.numPoints(phAxis);
-                obj.sendError('Number of points isn''t a positive integer! reverting');
-            end
-            
-        end
-        
-        function cbxFixedChangedCallback(obj, index)
-            % index - int. [1 to length(obj.stageAxes)] which view was changed
-            stage = getObjByName(obj.stageName);
-                if isempty(stage); throwBaseObjException(obj.stageName); end
-            scanParams = stage.scanParams;
-            phAxis = ClassStage.getAxis(obj.stageAxes(index));
-            
-            cbx = obj.cbxFixed(index);
-            scanParams.isFixed(phAxis) = cbx.Value;
-            obj.colorifyFixed(index);
-        end
-        
-        function scanAroundCallback(obj, index)
-            edtScan = obj.edtScanAround(index);
-            valueLimStr = edtScan.String;
-            if ~ValidationHelper.isValueNonNegative(valueLimStr)
-                edtScan.String = obj.SCAN_AROUND_DEFAULT_STRING;
-                obj.sendError(sprintf('"Scan Around" (axis %s) value should be non-negative! Reverting to default', obj.stageAxes(index)));
-            end
-            val = str2double(valueLimStr);
-            signifDigits = 1;
-            edtScan.String = StringHelper.formatNumber(val, signifDigits);
-        end
-        
-        function setAroundCallback(obj, index)
-            % Change the values in the GUI, and call their callbacks that
-            % will change it in the stage
-            %
-            % index - int. [1 to length(obj.stageAxes)] which button was pressed
-            
-            edtScan = obj.edtScanAround(index);
-            valueLimStr = edtScan.String;
-            
-            signifDigits = 1;
-            valueLimHalf = round(str2double(valueLimStr)/2, signifDigits);
-            
-            stage = getObjByName(obj.stageName);
-                if isempty(stage); throwBaseObjException(obj.stageName); end
-            scanParams = stage.scanParams;
-            phAxis = ClassStage.getAxis(obj.stageAxes(index));
-            
-            from = scanParams.fixedPos(phAxis) - valueLimHalf;
-            to = scanParams.fixedPos(phAxis) + valueLimHalf;
-            obj.edtFrom(index).String = from;
-            obj.edtTo(index).String = to;
-            obj.edtFromChangedCallback(index);
-            obj.edtToChangedCallback(index);
-        end
-        
-        function edtFromChangedCallback(obj, index)
-            % index - int. [1 to length(obj.stageAxes)] which view was changed
-            stage = getObjByName(obj.stageName);
-                if isempty(stage); throwBaseObjException(obj.stageName); end
-            scanParams = stage.scanParams;
-            phAxis = ClassStage.getAxis(obj.stageAxes(index));
-            
-            viewFrom = obj.edtFrom(index);
-            if ~ValidationHelper.isStringValueANumber(viewFrom.String)
-                viewFrom.String = scanParams.from(phAxis);
-                obj.sendError('Only numbers can be accepted! Reverting.');
-            end
-            from = str2double(viewFrom.String);
-            [lowerBound, upperBound] = stage.ReturnLimits(phAxis);
-            if ~ValidationHelper.isInBorders(from, lowerBound, upperBound)
-                warningMsg = sprintf( ...
-                    '"from" (index: %s) is not in bounds! Reverting.\n(bounds: [%d, %d])', ...
-                    obj.stageAxes(index), ...
-                    lowerBound, ...
-                    upperBound);
-                from = scanParams.from(phAxis);
-                obj.sendWarning(warningMsg);
-            elseif from == scanParams.to(phAxis)
-                warningMsg = sprintf( ...
-                    'Scan over the %s axis starts and ends at the same point!', ...
-                    obj.stageAxes(index));
-                obj.sendWarning(warningMsg)
+            n = length(stage.availableAxes);
+            S = MainGuiStyle;
+            um = MainGuiStyle.micron;
+
+            [panel, inner] = MainGuiStyle.section(parent.component, 'Scan area');
+            obj.component = panel;
+
+            gridRow = MainGuiStyle.hbox(inner, 0);
+            grid = MainGuiStyle.grid(gridRow, 4);
+            MainGuiStyle.empty(gridRow);
+
+            % columns: axis | scan | from | to | dir | points | step | centre | span
+            MainGuiStyle.empty(grid);
+            for i = 1:n; MainGuiStyle.axisTag(grid, obj.stageAxes(i)); end
+
+            MainGuiStyle.header(grid, 'Scan');
+            obj.cbxScan = gobjects(1, n);
+            for i = 1:n
+                box = MainGuiStyle.hbox(grid, 0);
+                MainGuiStyle.empty(box);
+                obj.cbxScan(i) = MainGuiStyle.checkbox(box, '', false, 'TooltipString', ...
+                    sprintf('Scan along %s. Off: %s stays at its Centre during the scan.', upper(obj.stageAxes(i)), upper(obj.stageAxes(i))));
+                box.Widths = [-1 18];
             end
 
-            [viewFrom.String, scanParams.from(phAxis)] = StringHelper.formatNumber(from);
+            obj.edtFrom = obj.column(grid, sprintf('From (%s)', um), n, 'First point of the range');
+            obj.edtTo = obj.column(grid, sprintf('To (%s)', um), n, 'Last point of the range');
+
+            MainGuiStyle.header(grid, 'Dir');
+            obj.btnDir = gobjects(1, n);
+            for i = 1:n
+                obj.btnDir(i) = MainGuiStyle.button(grid, char(8594), 'normal', 'FontSize', 11);
+            end
+
+            obj.edtNumPoints = obj.column(grid, 'Points', n, 'Number of points along this axis');
+            obj.edtStep = obj.column(grid, sprintf('Step (%s)', um), n, ...
+                'Distance between points. Typing a step changes Points to fit From-To.');
+            obj.edtCentre = obj.column(grid, sprintf('Centre (%s)', um), n, ...
+                'Where this axis stays when it is not scanned, and the middle of the range when you type a Span');
+            obj.edtSpan = obj.column(grid, sprintf('Span (%s)', um), n, ...
+                'Length of the range. Typing a span sets From/To = Centre ± Span/2.');
+
+            set(grid, 'Widths', obj.COL_WIDTHS, 'Heights', [S.HEAD_H, S.ROW_H * ones(1, n)]);
+            gridRow.Widths = [sum(obj.COL_WIDTHS) + 4*numel(obj.COL_WIDTHS), -1];
+
+            buttons = MainGuiStyle.hbox(inner, S.GAP);
+            obj.btnCentreHere = MainGuiStyle.button(buttons, [sprintf('Centre %s stage', char(8592))], 'normal', ...
+                'TooltipString', 'Set every Centre to where the stage is now');
+            obj.btnRangeAround = MainGuiStyle.button(buttons, sprintf('Range = centre %s span/2', char(177)), 'normal', ...
+                'TooltipString', 'For every scanned axis: From/To = Centre ± Span/2');
+            obj.btnFullRange = MainGuiStyle.button(buttons, 'Full soft range', 'normal', ...
+                'TooltipString', 'For every scanned axis: From/To = the soft limits');
+            obj.btnGoCentre = MainGuiStyle.button(buttons, 'Go to centre', 'normal', ...
+                'TooltipString', 'Move the stage to the Centre of every axis');
+            buttons.Widths = [-1.1 -1.4 -1 -0.9];
+
+            obj.tvSummary = MainGuiStyle.hint(inner, '');
+
+            inner.Heights = [S.HEAD_H + n*S.ROW_H + 4*n, S.ROW_H, 16];
+            obj.height = MainGuiStyle.sectionHeight(MainGuiStyle.rowsHeight(inner.Heights));
+            obj.width = sum(obj.COL_WIDTHS) + 60;
+
+            %%%% Callbacks %%%%
+            for i = 1:n
+                set(obj.cbxScan(i), 'Callback', @(h,e) obj.cbxScanCallback(i));
+                set(obj.edtFrom(i), 'Callback', @(h,e) obj.edtFromChangedCallback(i));
+                set(obj.edtTo(i), 'Callback', @(h,e) obj.edtToChangedCallback(i));
+                set(obj.btnDir(i), 'Callback', @(h,e) obj.btnDirCallback(i));
+                set(obj.edtNumPoints(i), 'Callback', @(h,e) obj.edtNumPointsChangedCallback(i));
+                set(obj.edtStep(i), 'Callback', @(h,e) obj.edtStepCallback(i));
+                set(obj.edtCentre(i), 'Callback', @(h,e) obj.edtFixedChangedCallback(i));
+                set(obj.edtSpan(i), 'Callback', @(h,e) obj.edtSpanCallback(i));
+            end
+            obj.btnCentreHere.Callback = @(h,e) obj.btnCentreHereCallback();
+            obj.btnRangeAround.Callback = @(h,e) obj.btnRangeAroundCallback();
+            obj.btnFullRange.Callback = @(h,e) obj.btnFullRangeCallback();
+            obj.btnGoCentre.Callback = @(h,e) obj.btnGoCentreCallback();
+
+            obj.refresh();
         end
-        
-        function edtToChangedCallback(obj, index)
-            % index - int. [1 to length(obj.stageAxes)] which view was changed
-            stage = getObjByName(obj.stageName);
-                if isempty(stage); throwBaseObjException(obj.stageName); end
-            scanParams = stage.scanParams;
-            phAxis = ClassStage.getAxis(obj.stageAxes(index));
-            
-            viewTo = obj.edtTo(index);
-            if ~ValidationHelper.isStringValueANumber(viewTo.String)
-                viewTo.String = scanParams.to(phAxis);
-                obj.sendError('Only numbers can be accepted! Reverting.');
-            end
-            to = str2double(viewTo.String);
-            [lowerBound, upperBound] = stage.ReturnLimits(phAxis);
-            if ~ValidationHelper.isInBorders(to, lowerBound, upperBound)
-                warningMsg = sprintf( ...
-                    '"to" (index: %s) is not in bounds! Reverting.\n(bounds: [%d, %d])', ...
-                    obj.stageAxes(index), ...
-                    lowerBound, ...
-                    upperBound);
-                to = scanParams.to(phAxis);                
-                obj.sendWarning(warningMsg);
-            elseif to == scanParams.from(phAxis)
-                warningMsg = sprintf( ...
-                    'Scan over the %s axis starts and ends at the same point!', ...
-                    obj.stageAxes(index));
-                obj.sendWarning(warningMsg)
-            end
-            
-            [viewTo.String, scanParams.to(phAxis)] = StringHelper.formatNumber(to);
-            
-        end
-        
-        function edtFixedChangedCallback(obj, index)
-            % index - int. [1 to length(obj.stageAxes)] which view was changed
-            stage = getObjByName(obj.stageName);
-                if isempty(stage); throwBaseObjException(obj.stageName); end
-            scanParams = stage.scanParams;
-            phAxis = ClassStage.getAxis(obj.stageAxes(index));
-            
-            viewFixed = obj.edtFixedPos(index);
-            if ~ValidationHelper.isStringValueANumber(viewFixed.String)
-                viewFixed.String = StringHelper.formatNumber(scanParams.fixedPos(phAxis));
-                obj.sendError('Only numbers can be accepted! reverting.');
-            end
-            fixedPos = str2double(viewFixed.String);
-            [lowerBound, upperBound] = stage.ReturnLimits(phAxis);
-            if ~ValidationHelper.isInBorders(fixedPos, lowerBound, upperBound)
-                warningMsg = sprintf( ...
-                    '"fixedPos" (index: %s) is not in bounds! Setting it to the bound...\n(bounds: [%d, %d])', ...
-                    obj.stageAxes(index), ...
-                    lowerBound, ...
-                    upperBound);
-                obj.sendWarning(warningMsg);
-                if fixedPos > upperBound
-                    fixedPos = upperBound;
+
+        function refresh(obj)
+            [stage, scanParams] = obj.getStageAndParams();
+            um = MainGuiStyle.micron;
+            for i = 1 : length(obj.stageAxes)
+                k = ClassStage.getAxis(obj.stageAxes(i));     % index in scan params
+                isScanned = ~scanParams.isFixed(k);
+                obj.cbxScan(i).Value = isScanned;
+                obj.edtFrom(i).String = MainGuiStyle.num(scanParams.from(k));
+                obj.edtTo(i).String = MainGuiStyle.num(scanParams.to(k));
+                obj.edtNumPoints(i).String = sprintf('%d', scanParams.numPoints(k));
+                obj.edtStep(i).String = MainGuiStyle.num(obj.stepOf(scanParams, k), 4);
+                obj.edtCentre(i).String = MainGuiStyle.num(scanParams.fixedPos(k));
+                obj.edtSpan(i).String = MainGuiStyle.num(abs(scanParams.to(k) - scanParams.from(k)));
+
+                reversed = numel(scanParams.reverse) >= k && scanParams.reverse(k);
+                if reversed
+                    set(obj.btnDir(i), 'String', char(8592), 'TooltipString', ...
+                        sprintf('%s is scanned from To to From (%s %s %s). Click: From to To.', upper(obj.stageAxes(i)), ...
+                        MainGuiStyle.num(scanParams.to(k)), char(8594), MainGuiStyle.num(scanParams.from(k))));
                 else
-                    fixedPos = lowerBound;
+                    set(obj.btnDir(i), 'String', char(8594), 'TooltipString', ...
+                        sprintf('%s is scanned from From to To (%s %s %s %s). Click: the other way.', upper(obj.stageAxes(i)), ...
+                        MainGuiStyle.num(scanParams.from(k)), char(8594), MainGuiStyle.num(scanParams.to(k)), um));
+                end
+
+                MainGuiStyle.setFieldEnabled([obj.edtFrom(i), obj.edtTo(i), obj.edtNumPoints(i), ...
+                    obj.edtStep(i), obj.edtSpan(i)], isScanned);
+                obj.btnDir(i).Enable = BooleanHelper.boolToOnOff(isScanned);
+                MainGuiStyle.setFieldEnabled(obj.edtCentre(i), true);
+            end
+
+            % Summary line, with the shortest it can take (pixel time only)
+            summary = scanParams.describe(stage.ReturnMaxScanSize(2));
+            if scanParams.nDims > 0
+                nPixels = prod(scanParams.numPoints(~scanParams.isFixed)) * (1 + logical(scanParams.isMWContrastScan));
+                summary = sprintf('%s · at least %s', summary, MainGuiStyle.duration(nPixels * scanParams.pixelTime));
+            end
+            obj.tvSummary.String = summary;
+            obj.tvSummary.TooltipString = 'At least = pixel time × pixels; moving between pixels adds to it.';
+        end
+    end
+
+    %% Callbacks
+    methods
+        function cbxScanCallback(obj, index)
+            [stage, scanParams, k] = obj.getStageAndParams(index);
+            scanParams.isFixed(k) = ~obj.cbxScan(index).Value;
+            stage.sendEventScanParamsChanged();
+        end
+
+        function btnDirCallback(obj, index)
+            [stage, scanParams, k] = obj.getStageAndParams(index);
+            if numel(scanParams.reverse) < 3; scanParams.reverse(end+1:3) = false; end
+            scanParams.reverse(k) = ~scanParams.reverse(k);
+            stage.sendEventScanParamsChanged();
+        end
+
+        function edtNumPointsChangedCallback(obj, index)
+            [stage, scanParams, k] = obj.getStageAndParams(index);
+            str = obj.edtNumPoints(index).String;
+            if ValidationHelper.isValuePositiveInteger(str) && str2double(str) >= 2
+                scanParams.numPoints(k) = str2double(str);
+            else
+                obj.sendWarning('Points must be a whole number of at least 2. Reverting.');
+            end
+            stage.sendEventScanParamsChanged();
+        end
+
+        function edtStepCallback(obj, index)
+            % A step: Points = the number that fits From-To with (about) that step
+            [stage, scanParams, k] = obj.getStageAndParams(index);
+            str = obj.edtStep(index).String;
+            span = abs(scanParams.to(k) - scanParams.from(k));
+            if ~ValidationHelper.isValuePositive(str) || span == 0
+                obj.sendWarning('The step must be a positive number (and From must differ from To). Reverting.');
+            else
+                scanParams.numPoints(k) = max(2, round(span / str2double(str)) + 1);
+            end
+            stage.sendEventScanParamsChanged();
+        end
+
+        function edtSpanCallback(obj, index)
+            % A span: From/To = Centre ± span/2, clipped to the soft limits
+            [stage, scanParams, k] = obj.getStageAndParams(index);
+            str = obj.edtSpan(index).String;
+            if ~ValidationHelper.isValueNonNegative(str)
+                obj.sendWarning('The span must be a non-negative number. Reverting.');
+            else
+                obj.setRangeAround(stage, scanParams, k, str2double(str));
+            end
+            stage.sendEventScanParamsChanged();
+        end
+
+        function edtFromChangedCallback(obj, index)
+            obj.setEnd(index, 'from');
+        end
+
+        function edtToChangedCallback(obj, index)
+            obj.setEnd(index, 'to');
+        end
+
+        function setEnd(obj, index, which)
+            [stage, scanParams, k] = obj.getStageAndParams(index);
+            if strcmp(which, 'from'); field = obj.edtFrom(index); else; field = obj.edtTo(index); end
+            str = field.String;
+            [lowerBound, upperBound] = stage.ReturnLimits(k);
+            if ~ValidationHelper.isStringValueANumber(str)
+                obj.sendWarning('Only numbers can be accepted! Reverting.');
+            elseif ~ValidationHelper.isInBorders(str2double(str), lowerBound, upperBound)
+                obj.sendWarning(sprintf('"%s" of %s must be within the soft limits [%s, %s] %s. Reverting.', ...
+                    which, upper(obj.stageAxes(index)), MainGuiStyle.num(lowerBound), MainGuiStyle.num(upperBound), MainGuiStyle.micron));
+            else
+                scanParams.(which)(k) = str2double(str);
+                if scanParams.from(k) == scanParams.to(k)
+                    obj.sendWarning(sprintf('The scan over %s starts and ends at the same point!', upper(obj.stageAxes(index))));
                 end
             end
-            
-            [viewFixed.String, scanParams.fixedPos(phAxis)] = StringHelper.formatNumber(fixedPos);
+            stage.sendEventScanParamsChanged();
         end
-        
-        function colorifyFixed(obj, index)
-           % index - int. [1 to length(obj.stageAxes)] which view was changed
-           stage = getObjByName(obj.stageName);
-                if isempty(stage); throwBaseObjException(obj.stageName); end
-           scanParams = stage.scanParams;
-           phAxis = ClassStage.getAxis(obj.stageAxes(index));
-           axisIsFixed = scanParams.isFixed(phAxis);
-           
-           obj.recolor( ...     % Grays out if second parameter is true, reverts -- if false
-               [obj.edtFrom(index), obj.edtTo(index), obj.edtNumPoints(index)], ...
-               axisIsFixed);
-           obj.recolor(obj.edtFixedPos(index), ~axisIsFixed);
+
+        function edtFixedChangedCallback(obj, index)
+            % Centre (scanParams.fixedPos)
+            [stage, scanParams, k] = obj.getStageAndParams(index);
+            str = obj.edtCentre(index).String;
+            if ~ValidationHelper.isStringValueANumber(str)
+                obj.sendWarning('Only numbers can be accepted! Reverting.');
+                stage.sendEventScanParamsChanged();
+                return
+            end
+            centre = str2double(str);
+            [lowerBound, upperBound] = stage.ReturnLimits(k);
+            if ~ValidationHelper.isInBorders(centre, lowerBound, upperBound)
+                obj.sendWarning(sprintf('The centre of %s must be within the soft limits [%s, %s] %s. Set to the limit.', ...
+                    upper(obj.stageAxes(index)), MainGuiStyle.num(lowerBound), MainGuiStyle.num(upperBound), MainGuiStyle.micron));
+                centre = min(max(centre, lowerBound), upperBound);
+            end
+            scanParams.fixedPos(k) = centre;
+            stage.sendEventScanParamsChanged();
         end
-        
-        function refresh(obj)
+
+        function btnCentreHereCallback(obj)
+            stage = obj.getStageAndParams();
+            stage.sendPosToScanParams();    % centre = current position, all axes (sends an event)
+        end
+
+        function btnRangeAroundCallback(obj)
+            [stage, scanParams] = obj.getStageAndParams();
+            for i = 1:length(obj.stageAxes)
+                k = ClassStage.getAxis(obj.stageAxes(i));
+                if ~scanParams.isFixed(k)
+                    obj.setRangeAround(stage, scanParams, k, abs(scanParams.to(k) - scanParams.from(k)));
+                end
+            end
+            stage.sendEventScanParamsChanged();
+        end
+
+        function btnFullRangeCallback(obj)
+            [stage, scanParams] = obj.getStageAndParams();
+            for i = 1:length(obj.stageAxes)
+                k = ClassStage.getAxis(obj.stageAxes(i));
+                if ~scanParams.isFixed(k)
+                    [scanParams.from(k), scanParams.to(k)] = stage.ReturnLimits(k);
+                end
+            end
+            stage.sendEventScanParamsChanged();
+        end
+
+        function btnGoCentreCallback(obj)
+            [stage, scanParams] = obj.getStageAndParams();
+            k = ClassStage.getAxis(obj.stageAxes);
+            stage.move(obj.stageAxes, scanParams.fixedPos(k));
+        end
+    end
+
+    methods (Access = private)
+        function edits = column(obj, grid, title, n, tooltip) %#ok<INUSL>
+            MainGuiStyle.header(grid, title);
+            edits = gobjects(1, n);
+            for i = 1:n
+                edits(i) = MainGuiStyle.edit(grid, '', 'TooltipString', tooltip);
+            end
+        end
+
+        function [stage, scanParams, k] = getStageAndParams(obj, index)
             stage = getObjByName(obj.stageName);
-                if isempty(stage); throwBaseObjException(obj.stageName); end
+            if isempty(stage); throwBaseObjException(obj.stageName); end
             scanParams = stage.scanParams;
-            
-            for i = 1 : length(obj.stageAxes)
-                phAxis = obj.stageAxes(i);
-                axisIndex = ClassStage.getAxis(phAxis);
-                
-                % Notice the difference:
-                % i - index for the views
-                % axisIndex - index in scan params
-                %
-                % For example, in a stage supporting only 'zy' scans,
-                % in the first iteration:   i --> 1 , axisIndex --> 3
-                % in the second iteration:  i --> 2 , axisIndex --> 2
-                
-                obj.edtFrom(i).String = scanParams.from(axisIndex);
-                obj.edtTo(i).String = scanParams.to(axisIndex);
-                obj.edtNumPoints(i).String = scanParams.numPoints(axisIndex);
-                obj.cbxFixed(i).Value = scanParams.isFixed(axisIndex);
-                obj.edtFixedPos(i).String = StringHelper.formatNumber(scanParams.fixedPos(axisIndex));
-                
-                obj.colorifyFixed(i);
+            k = [];
+            if nargin > 1
+                k = ClassStage.getAxis(obj.stageAxes(index));
+            end
+        end
+
+        function setRangeAround(obj, stage, scanParams, k, span) %#ok<INUSL>
+            [lowerBound, upperBound] = stage.ReturnLimits(k);
+            c = scanParams.fixedPos(k);
+            scanParams.from(k) = max(c - span/2, lowerBound);
+            scanParams.to(k) = min(c + span/2, upperBound);
+        end
+    end
+
+    methods (Static)
+        function s = stepOf(scanParams, k)
+            if scanParams.numPoints(k) < 2
+                s = NaN;
+            else
+                s = abs(scanParams.to(k) - scanParams.from(k)) / (scanParams.numPoints(k) - 1);
             end
         end
     end
-    
+
     %% overridden from EventListener
     methods
-        % When events happen, this function jumps.
-        % event is the event sent from the EventSender
         function onEvent(obj, event)
-            if event.isError || isfield(event.extraInfo, ClassStage.EVENT_SCAN_PARAMS_CHANGED)
+            if event.isError || isfield(event.extraInfo, ClassStage.EVENT_SCAN_PARAMS_CHANGED) ...
+                    || isfield(event.extraInfo, ClassStage.EVENT_LIM_CHANGED)
                 obj.refresh()
             end
         end
     end
-    
 end
-

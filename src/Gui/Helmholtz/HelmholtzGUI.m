@@ -18,6 +18,7 @@ classdef HelmholtzGUI < GuiController
         function onStarted(obj)
             obj.windowMinHeight = 1;
             obj.windowMinWidth = 1;
+            obj.maximize();     % the window is always used maximized
         end
         
         function onClose(obj)
