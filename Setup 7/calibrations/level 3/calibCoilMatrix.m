@@ -40,12 +40,20 @@ function out = calibCoilMatrix(opts)
 %
 % CURRENTS spread over the whole box (coilCurrentDesign), not small steps around one point:
 % the fit is linear in I, so leverage is spread. Kept where the model in use predicts
-% Brange (default 12-40 G): below that the lines crowd inside two linewidths of D, above it
-% the outer pair leaves the sweep. The model in use is the nominal one before the first
-% calibration, so the sweep is padded 20% for its scale error.
+% Brange (default 12-48 G): below that the lines crowd inside two linewidths of D. 48 G covers
+% the fields calibB1Rabi scans, so it never extrapolates the model in |B| (the first run, to
+% 40 G, was 0.08 G off below 39 G and 0.43 G off above 40 G).
 %
 % ONE FIXED FREQUENCY LIST for every point: an unchanged list skips the AWG re-upload (and
-% the "parameters have changed" dialog). Wide enough for the outer pair at 1.2*Bmax.
+% the "parameters have changed" dialog).
+%
+% THE SWEEP CATCHES EVERY DIP, BY CONSTRUCTION. No NV line can be further than gamma*|B| from
+% D in any field direction (equality only when aligned; checked over 28000 random directions).
+% The sweep is D -+ (gamma*Bmax*(1+scaleTol) + edgeMHz): Bmax the largest field in the design,
+% scaleTol for how wrong the model's |B| may be (5% calibrated, 20% nominal), and edgeMHz
+% (30) so the outermost dip keeps its wings -- a dip near the edge fits with its centre
+% pulled inward. 2698-3042 MHz for 48 G with a calibration loaded. After the fit, any
+% spectrum whose fitted dips came within 15 MHz of an edge is named.
 %
 % LOW MW AMPLITUDE (-30 dBm). The line positions are all that is used, and power broadening
 % is what blends lines -- every line below 2850 came out at 18-23 MHz at higher power here.
@@ -61,9 +69,13 @@ function out = calibCoilMatrix(opts)
 % ===================================================================
 %   currents       N x 3 list of currents to measure at, A (default: coilCurrentDesign)
 %   nPoints        (default 20)
-%   Brange         [min max] |B| for the design, G (default [12 40])
+%   Brange         [min max] |B| for the design, G (default [12 48] -- up to the fields the
+%                  B1 scan uses, so nothing downstream is an extrapolation in |B|)
 %   frac           [lo hi] fraction of each supply's range to use (default [0.05 1])
-%   freqs          MHz (default: D0 +/- (1.2*gamma*Brange(2) + 10), step freqStep)
+%   freqs          MHz (default: D -+ (gamma*Bmax*(1+scaleTol) + edgeMHz), step freqStep,
+%                  Bmax = max(Brange(2), largest predicted |B|) -- see THE SWEEP above)
+%   scaleTol       how wrong the model's |B| may be ([] = 0.05 calibrated, 0.2 nominal)
+%   edgeMHz        room left beyond the outermost possible dip (default 30, ~1.5 linewidths)
 %   freqStep       MHz (default 1.5)
 %   amplitude      dBm per channel (default -30)
 %   repeats, averages   (default 100, 3)
@@ -93,7 +105,7 @@ function out = calibCoilMatrix(opts)
 %   h.setCoilCalibration(cc.calibration);  h.save(setup7Paths().json);
 
     if ~exist('opts', 'var'); opts = struct(); end
-    opts = withDefaults(opts, struct('currents', [], 'nPoints', 20, 'Brange', [12 40], ...
+    opts = withDefaults(opts, struct('currents', [], 'nPoints', 20, 'Brange', [12 48], 'scaleTol', [], 'edgeMHz', 30, ...
         'frac', [0.05 1], 'freqs', [], 'freqStep', 1.5, 'amplitude', -30, 'repeats', 100, ...
         'averages', 3, 'settle', 2, 'jsonLocation', '', 'nominalM', [], 'nominalB0', [], ...
         'gaugeRef', [], 'fitOpts', struct(), 'esrOpts', struct(), 'replay', [], ...
@@ -166,17 +178,37 @@ function out = calibCoilMatrix(opts)
     end
     Bpred = h.fieldFor(Ilist);
     BmaxPred = max(sqrt(sum(Bpred.^2, 2)));
+    % ---- the sweep: every dip of every point inside it, with room to spare -----------
+    % No NV line can lie outside D -+ gamma*|B|, whatever the field's direction (equality
+    % only when exactly aligned; checked numerically over 28000 random directions, 5-60 G).
+    % So the sweep must reach gamma*|B|max from D, plus the |B| the model might be wrong by
+    % (scaleTol: 5% with a calibration loaded, 20% on the nominal model), plus edgeMHz so the
+    % outermost line still has wings for the fit -- a line closer to the edge than its own
+    % width is fitted with its centre pulled inward, which reads as a smaller |B|.
+    scaleTol = opts.scaleTol;
+    if isempty(scaleTol); scaleTol = 0.2 - 0.15*h.isCalibrated; end
+    Dc = opts.D0; if h.isCalibrated; Dc = h.D; end
+    Bmax = max(opts.Brange(2), BmaxPred);
+    need = [Dc - GAMMA*Bmax*(1 + scaleTol) - opts.edgeMHz, Dc + GAMMA*Bmax*(1 + scaleTol) + opts.edgeMHz];
     if isempty(opts.freqs)
-        span = 1.2 * GAMMA * max(opts.Brange(2), BmaxPred) + 10;
-        opts.freqs = round(opts.D0 - span) : opts.freqStep : round(opts.D0 + span);
+        opts.freqs = floor(need(1)) : opts.freqStep : ceil(need(2));
+    elseif min(opts.freqs) > need(1) || max(opts.freqs) < need(2)
+        warning('calibCoilMatrix:sweep', ['the freqs given (%.0f-%.0f MHz) do not cover %.0f-%.0f ' ...
+            'MHz: the outer dips at %.1f G (+%.0f%%) would be within %.0f MHz of an edge or ' ...
+            'outside it.'], min(opts.freqs), max(opts.freqs), need(1), need(2), Bmax, ...
+            100*scaleTol, opts.edgeMHz);
     end
     out.design = Ilist; out.freqs = opts.freqs;
+    out.sweepNeed = need;
 
     if opts.verbose
         fprintf('model in use for the design: %s\n', h.calibrationSummary());
         fprintf('%d points, sweep %.0f-%.0f MHz in %.1f MHz steps (%d frequencies), %d dBm\n', ...
                 size(Ilist, 1), min(opts.freqs), max(opts.freqs), median(diff(opts.freqs)), ...
                 numel(opts.freqs), opts.amplitude);
+        fprintf(['every dip stays at least %.0f MHz inside the sweep for any |B| up to %.1f G\n' ...
+                 '(largest predicted %.1f G, +%.0f%% for the model''s error): no dip leaves D -+ gamma|B|.\n'], ...
+                opts.edgeMHz, Bmax*(1 + scaleTol), BmaxPred, 100*scaleTol);
         fprintf('\n  %3s  %21s  %s\n', '#', 'I (A)', '|B| predicted by the model in use (G)');
         for j = 1:size(Ilist, 1)
             fprintf('  %3d  [%5.3f %5.3f %5.3f]  %6.2f\n', j, Ilist(j, :), norm(Bpred(j, :)));
@@ -274,6 +306,24 @@ function out = analyse(out, spectra, opts)
         return
     end
     out.calibration = fit.calibration;
+
+    % ---- did every dip land well inside its sweep? (the fitted model's dips) ---------
+    S = fit.spectra; sw = vertcat(data.sweep);
+    edge = NaN(numel(S), 1);
+    for j = 1:numel(S)
+        edge(j) = min([S(j).allLines - sw(j, 1), sw(j, 2) - S(j).allLines]);
+    end
+    out.dipEdgeMHz = edge;
+    tight = find(edge < 15);
+    if opts.verbose
+        if isempty(tight)
+            fprintf('\nevery fitted dip is at least %.0f MHz inside its sweep.\n', min(edge));
+        else
+            fprintf(['\nNOTE %d spectra have a dip within 15 MHz of the sweep edge (%s): its centre may be\n' ...
+                     'pulled inward. Widen freqs (or raise edgeMHz) before trusting those spectra.\n'], ...
+                    numel(tight), mat2str(tight'));
+        end
+    end
 
     % ---- what the new model means for alignment ----------------------------
     Imin = [0 0 0]; Imax = [5.2 5.2 5.2];

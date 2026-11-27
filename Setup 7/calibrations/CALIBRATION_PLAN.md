@@ -198,8 +198,19 @@ collapses toward zero because the off-axis splittings differ by less than a line
 the span keeps moving all the way to zero tilt. If the survey after `alignToNV` shows a tilt,
 re-run the coil calibration rather than scanning.
 
-`calibB1Rabi` scans |B| so the aligned line sweeps the antenna response, running an ESR at
-each field to find the line and a Rabi at that line to measure B1.
+`calibB1Rabi` scans |B| so the aligned line sweeps the antenna response, and at each field
+drives a Rabi on the line to measure B1.
+
+**The line is predicted, not measured, at each point (esrMode 'predict', 2026-11).** The
+2026-11-27 run measured it with an ESR at every point, and near the peak those single-line
+fits were pulled 2–4 MHz by the resonator's own dip, which the line crosses there; |B| solved
+from each whole spectrum agreed with the coil calibration to 0.39 G rms (0.08 G below 39 G).
+So: two wide anchor surveys at the ends of the range give |B| = a·Brho + b and D from whole
+spectra, every Rabi is driven at the line that implies, and one wide ESR at the optimum
+verifies it; the json gets the line that verify spectrum's |B| and D imply. 3 ESRs instead
+of ~23; `testB1Predict` grades it on a simulated rig. esrMode 'measure' is the old way.
+`calibCoilMatrix` now designs up to 48 G (`Brange` [12 48]) so this range is not an
+extrapolation, and its sweep is sized so no dip can be within 30 MHz of an edge.
 
 **The Rabi frequency *is* B1**, up to one fixed constant: Ω = γ·B1·⟨matrix element⟩, and the
 matrix element moves by under one part in 5000 across the scan, since the mixing that would

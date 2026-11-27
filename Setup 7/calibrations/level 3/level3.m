@@ -66,7 +66,7 @@ cc = calibCoilMatrix(struct('dryRun', true));
 h = getObjByName('Helmholtz');  h.control('auto');
 cc = calibCoilMatrix(struct( ...
     'nPoints',      20, ...
-    'Brange',       [12 40], ...
+    'Brange',       [12 48], ...       % up to the fields 3.4b scans; the sweep follows (2698-3042 MHz)
     'amplitude',    -30, ...
     'repeats',      100, ...
     'averages',     3));
@@ -122,6 +122,7 @@ fprintf('\n|B|: survey %.3f G, coil model %.3f G\n', sv.B, h.Brho);
 % Five tests: recover a known resonator, refuse when the peak is not in the data, and quote
 % error bars that cover the truth as often as they claim to. Expect ALL TESTS PASS.
 tb = testB1RabiChain;
+tp = testB1Predict;          % predict mode on a simulated rig: 3 ESRs, the true line lands on f0
 
 
 %% 3.4b  B1 maximum  --  the operating frequency and field
@@ -137,19 +138,27 @@ tb = testB1RabiChain;
 % biased Q. minR2 is 0 by default and set here only if you want a floor -- R^2 is capped by
 % the signal-to-noise ratio, so 0.9 would reject sound fits for being quiet.
 %
-% The second panel now also draws where the coil calibration EXPECTS the tracked line, and
-% prints "measured - expected". The run is saved to results\<date>\level 3\calibB1Rabi_*.mat;
+% PREDICT MODE (esrMode 'predict', the default with a coil calibration): no ESR per point.
+% Two wide anchor surveys (lowest and highest field) measure |B| and D from the whole
+% spectrum, every Rabi is driven at the line that implies, and one real ESR at the optimum
+% verifies it -- 3 ESRs instead of ~22. Why: on 2026-11-27 the per-point line fits were
+% pulled 2-4 MHz by the resonator's own dip, while |B| from whole spectra agreed with the coil
+% calibration to 0.39 G rms. esrMode 'measure' is the old way. esrFreqs is only used there;
+% the anchors and the verify size their own sweep (outer pair + 35 MHz).
+%
+% The second panel draws where the coil calibration EXPECTS the tracked line, the anchors
+% (green squares) and the fit. The run is saved to results\<date>\level 3\calibB1Rabi_*.mat;
 % to look at it again without the hardware (the field is not moved):
 %     out = calibB1Rabi(struct('replay', out));      % or the saved .mat path
 h = getObjByName('Helmholtz');  h.control('auto');
 
 out = calibB1Rabi(struct( ...
+    'esrMode',              'predict', ...
     'rabiAmplitude',        -16, ...
     'rhoCoarse',            34:1:46, ...
     'repeats',              300, ...
     'averages',             3, ...
-    'esrFreqs',             2720:3:3020, ...      % must reach D + gamma*|B| at the TOP field
-    'esrAmplitude',         -25, ...
+    'esrAmplitude',         -25, ...           % the anchors' and the verify ESR's
     'esrRepeats',           50, ...
     'esrAverages',          3));
 %% 3.4c  write the field magnitude
@@ -172,8 +181,14 @@ fprintf('Brho saved: %.3f G\n', out.rhoOptimum);
 % Writes only when 3.4b settled (out.ok). An unsettled scan says "nothing downstream should
 % use these numbers", and this cell would otherwise move every experiment's frequency to one.
 % To see the diff first, add 'dryRun', true.
+%
+% WHICH frequency: in predict mode, the line the verify ESR's whole spectrum puts at the chosen
+% field (out.driveFrequency) -- the NV line itself, not pulled by the resonator. Otherwise the
+% resonator centre the field was set to put the line on (out.resonantFrequency).
+fDrive = out.resonantFrequency;
+if isfield(out, 'driveFrequency') && isfinite(out.driveFrequency); fDrive = out.driveFrequency; end
 if out.ok
-    w = expPropsWrite(struct('frequency', out.resonantFrequency), ...
+    w = expPropsWrite(struct('frequency', fDrive), ...
                       struct('jsonLocation', setup7Paths().json));
 else
     fprintf(['\n3.4b did NOT settle (see its hand-over block), so the frequency has not been\n' ...
@@ -185,7 +200,7 @@ end
 
 %% 3.6  check before moving up
 h = getObjByName('Helmholtz');
-fprintf('\nfrequency in expProperties.json:  %.2f MHz\n', out.resonantFrequency);
+fprintf('\nfrequency in expProperties.json:  %.2f MHz\n', fDrive);
 fprintf('Brho %.3f G, theta %.4f (polar), phi %.4f (azimuth) -- %s\n', ...
         h.Brho, h.Btheta, h.Bphi, h.frameName);
 [kNV, cNV] = h.nearestNV();
